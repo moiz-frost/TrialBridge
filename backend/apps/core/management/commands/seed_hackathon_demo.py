@@ -7,6 +7,7 @@ from django.core.management import BaseCommand, call_command
 
 from apps.core.models import Organization
 from apps.matching.services.engine import MatchingRunAlreadyRunningError, run_full_matching_cycle
+from apps.patients.models import PatientProfile
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,18 @@ class Command(BaseCommand):
             help="Number of synthetic patients to generate per seeded organization (default: 12)",
         )
         parser.add_argument(
+            "--total-patients",
+            type=int,
+            default=0,
+            help="Total synthetic patients to generate across all seeded organizations. Overrides --patients-per-org when > 0.",
+        )
+        parser.add_argument(
+            "--patient-mode",
+            choices=["random", "spectrum"],
+            default="spectrum",
+            help="Synthetic patient generation mode (default: spectrum).",
+        )
+        parser.add_argument(
             "--ctgov-limit",
             type=int,
             default=80,
@@ -88,6 +101,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         password = str(options["password"])
         patients_per_org = max(0, int(options["patients_per_org"]))
+        total_patients = max(0, int(options["total_patients"]))
+        patient_mode = str(options["patient_mode"])
         ctgov_limit = max(0, int(options["ctgov_limit"]))
         skip_ctgov = bool(options["skip_ctgov"])
         reset_passwords = bool(options["reset_passwords"])
@@ -145,16 +160,32 @@ class Command(BaseCommand):
             except Exception as exc:
                 self.stdout.write(self.style.WARNING(f"CT.gov ingestion failed, continuing with sample trials only: {exc}"))
 
-        if not skip_patients and patients_per_org > 0:
+        if not skip_patients:
             self.stdout.write(self.style.NOTICE("Generating synthetic patients..."))
+            if total_patients > 0:
+                org_count = len(COORDINATOR_SEEDS)
+                base = total_patients // org_count
+                remainder = total_patients % org_count
+                desired_totals = [base + (1 if idx < remainder else 0) for idx in range(org_count)]
+                targets = []
+                for idx, seed in enumerate(COORDINATOR_SEEDS):
+                    existing = PatientProfile.objects.filter(organization__slug=seed.org_slug).count()
+                    targets.append(max(0, desired_totals[idx] - existing))
+            else:
+                targets = [patients_per_org for _ in COORDINATOR_SEEDS]
+
             for idx, seed in enumerate(COORDINATOR_SEEDS):
+                target_count = max(0, targets[idx])
+                if target_count == 0:
+                    continue
                 # Slightly different seeds for variety per organization.
                 random_seed = 42 + (idx * 11)
                 call_command(
                     "generate_mock_patients",
-                    count=patients_per_org,
+                    count=target_count,
                     organization_slug=seed.org_slug,
                     seed=random_seed,
+                    mode=patient_mode,
                 )
 
         if not skip_matching:

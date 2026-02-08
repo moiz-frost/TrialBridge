@@ -82,6 +82,9 @@ docker compose exec api python manage.py ingest_trials --source ctgov --limit 20
 
 # Manual matching run
 docker compose exec api python manage.py run_matching --run-type manual
+
+# Hackathon demo seed (coordinators + trials + synthetic patients)
+docker compose exec api python manage.py seed_hackathon_demo --total-patients 1000 --patient-mode spectrum --ctgov-limit 80 --reset-passwords
 ```
 
 ## Code Quality

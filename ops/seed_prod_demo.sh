@@ -14,6 +14,8 @@ fi
 
 DEMO_PASSWORD="${DEMO_PASSWORD:-TrialBridge@2026}"
 PATIENTS_PER_ORG="${PATIENTS_PER_ORG:-12}"
+TOTAL_PATIENTS="${TOTAL_PATIENTS:-0}"
+PATIENT_MODE="${PATIENT_MODE:-spectrum}"
 CTGOV_LIMIT="${CTGOV_LIMIT:-80}"
 RESET_PASSWORDS="${RESET_PASSWORDS:-1}"
 SKIP_CTGOV="${SKIP_CTGOV:-0}"
@@ -33,6 +35,8 @@ fi
 echo "Seeding demo data with:"
 echo "  password:         $DEMO_PASSWORD"
 echo "  patients/org:     $PATIENTS_PER_ORG"
+echo "  total patients:   $TOTAL_PATIENTS"
+echo "  patient mode:     $PATIENT_MODE"
 echo "  ctgov limit:      $CTGOV_LIMIT"
 echo "  reset passwords:  $RESET_PASSWORDS"
 echo "  skip ctgov:       $SKIP_CTGOV"
@@ -42,6 +46,8 @@ docker compose "${COMPOSE_ARGS[@]}" up -d postgres redis api
 docker compose "${COMPOSE_ARGS[@]}" exec -T api python manage.py seed_hackathon_demo \
   --password "$DEMO_PASSWORD" \
   --patients-per-org "$PATIENTS_PER_ORG" \
+  --total-patients "$TOTAL_PATIENTS" \
+  --patient-mode "$PATIENT_MODE" \
   --ctgov-limit "$CTGOV_LIMIT" \
   "${EXTRA_ARGS[@]}"
 
