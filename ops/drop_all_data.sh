@@ -20,8 +20,8 @@ set +a
 POSTGRES_DB="${POSTGRES_DB:-trialbridge}"
 POSTGRES_USER="${POSTGRES_USER:-trialbridge}"
 
-echo "Starting required services (postgres, redis, api)..."
-docker compose "${COMPOSE_ARGS[@]}" up -d postgres redis api
+echo "Starting required services (postgres, redis)..."
+docker compose "${COMPOSE_ARGS[@]}" up -d postgres redis
 
 echo "Resetting database schema (drop + recreate public)..."
 docker compose "${COMPOSE_ARGS[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<SQL
@@ -32,7 +32,10 @@ GRANT ALL ON SCHEMA public TO public;
 CREATE EXTENSION IF NOT EXISTS vector;
 SQL
 
-echo "Re-running migrations..."
-docker compose "${COMPOSE_ARGS[@]}" exec -T api python manage.py migrate --noinput
+echo "Re-running migrations with one-off api container (no race with entrypoint)..."
+docker compose "${COMPOSE_ARGS[@]}" run --rm api python manage.py migrate --noinput
+
+echo "Starting api service..."
+docker compose "${COMPOSE_ARGS[@]}" up -d api
 
 echo "Done. All DB data has been removed."
