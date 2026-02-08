@@ -30,6 +30,7 @@ export interface Patient {
   contactInfo: string;
   registeredAt: string;
   profileCompleteness: number;
+  structuredProfile?: Record<string, unknown>;
 }
 
 export interface MatchEvaluation {

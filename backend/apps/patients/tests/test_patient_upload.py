@@ -1,6 +1,7 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
+from apps.core.models import Organization
 from apps.patients.models import PatientProfile
 
 
@@ -113,3 +114,46 @@ class PatientUploadApiTests(APITestCase):
         )
         self.assertEqual(access_response.status_code, 200)
         self.assertIn("patient_token", access_response.data)
+
+    def test_history_get_backfills_initial_story_for_legacy_patient(self):
+        org = Organization.objects.create(
+            name="Legacy Org",
+            slug="legacy-org",
+            country="Pakistan",
+            score_weights={"eligibility": 0.45, "feasibility": 0.30, "urgency": 0.20, "explainability": 0.05},
+        )
+        patient = PatientProfile.objects.create(
+            patient_code="PAT-9999",
+            organization=org,
+            full_name="Legacy Patient",
+            age=41,
+            sex="female",
+            city="Karachi",
+            country="Pakistan",
+            language="english",
+            diagnosis="Migraine",
+            stage="",
+            story="Legacy intake story about chronic headache and prior treatment response.",
+            structured_profile={},
+            contact_channel="email",
+            contact_value="legacy@example.com",
+            consent=True,
+            profile_completeness=70,
+        )
+
+        access_response = self.client.post(
+            "/api/v1/patient/access/",
+            {
+                "patient_code": patient.patient_code,
+                "contact_info": patient.contact_value,
+            },
+            format="json",
+        )
+        self.assertEqual(access_response.status_code, 200)
+        token = access_response.data["patient_token"]
+        self.client.credentials(HTTP_X_PATIENT_TOKEN=token)
+
+        history_response = self.client.get(f"/api/v1/patient/{patient.id}/history/")
+        self.assertEqual(history_response.status_code, 200)
+        self.assertGreaterEqual(len(history_response.data), 1)
+        self.assertEqual(history_response.data[0]["source"], "intake")

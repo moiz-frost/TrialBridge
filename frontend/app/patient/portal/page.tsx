@@ -240,20 +240,40 @@ export default function PatientPortalPage() {
     setPatientId(session.id);
     setPatientName(session.name || "Patient");
 
-    Promise.all([getPatientPortalMatches(session.id), getPatientHistoryEntries(session.id)])
-      .then(([matches, entries]) => {
+    Promise.allSettled([getPatientPortalMatches(session.id), getPatientHistoryEntries(session.id)])
+      .then(([matchesResult, entriesResult]) => {
         if (!mounted) return;
-        const mapped = matches.map(toPortalMatch);
-        setHistoryEntries(entries || []);
-        if (mapped.length === 0) {
-          setPatientMatchResults([]);
-          setExpandedMatch(null);
-          setError("No matched trials available yet.");
+
+        if (entriesResult.status === "fulfilled") {
+          setHistoryEntries(entriesResult.value || []);
+        } else {
+          setHistoryEntries([]);
+        }
+
+        if (matchesResult.status === "fulfilled") {
+          const mapped = matchesResult.value.map(toPortalMatch);
+          if (mapped.length === 0) {
+            setPatientMatchResults([]);
+            setExpandedMatch(null);
+            setError("No matched trials available yet.");
+            return;
+          }
+          setPatientMatchResults(mapped);
+          setExpandedMatch(mapped[0].id);
+          setError("");
           return;
         }
-        setPatientMatchResults(mapped);
-        setExpandedMatch(mapped[0].id);
-        setError("");
+
+        if (ENABLE_MOCK_FALLBACK) {
+          setPatientMatchResults(defaultPatientMatchResults);
+          setExpandedMatch(defaultPatientMatchResults[0]?.id ?? null);
+          setError("Backend unavailable. Showing demo portal cards.");
+          return;
+        }
+
+        setPatientMatchResults([]);
+        setExpandedMatch(null);
+        setError("Could not load patient matches.");
       })
       .catch((err: unknown) => {
         if (!mounted) return;
@@ -287,7 +307,7 @@ export default function PatientPortalPage() {
     const narrativeError = validateNarrativeText(entryText, {
       minLength: 20,
       minTokens: 4,
-      requireMedicalSignal: true,
+      requireMedicalSignal: false,
     });
     if (narrativeError) {
       setHistoryError(narrativeError);
@@ -304,22 +324,31 @@ export default function PatientPortalPage() {
       setHistoryEntries((prev) => [response.entry, ...prev]);
       setHistoryNotice("Information added. Refreshing your match list...");
 
-      const refreshedMatches = await getPatientPortalMatches(patientId);
-      const mappedMatches = refreshedMatches.map(toPortalMatch);
-      setPatientMatchResults(mappedMatches);
-      setExpandedMatch((current) =>
-        current && mappedMatches.some((match) => match.id === current)
-          ? current
-          : (mappedMatches[0]?.id ?? null),
-      );
-
       const updatedCount = Number(response.matches_updated || 0);
       setHistoryNotice(
         updatedCount > 0
           ? `Information added. ${updatedCount} ${updatedCount === 1 ? "match was" : "matches were"} re-evaluated.`
-          : "Information added. Your profile and matches were refreshed.",
+          : "Information added.",
       );
-      setError(mappedMatches.length === 0 ? "No matched trials available yet." : "");
+
+      try {
+        const refreshedMatches = await getPatientPortalMatches(patientId);
+        const mappedMatches = refreshedMatches.map(toPortalMatch);
+        setPatientMatchResults(mappedMatches);
+        setExpandedMatch((current) =>
+          current && mappedMatches.some((match) => match.id === current)
+            ? current
+            : (mappedMatches[0]?.id ?? null),
+        );
+        setError(mappedMatches.length === 0 ? "No matched trials available yet." : "");
+      } catch (refreshErr: unknown) {
+        if (refreshErr instanceof ApiError && (refreshErr.status === 401 || refreshErr.status === 403)) {
+          clearPatientSession();
+          router.replace("/patient/login?next=/patient/portal");
+          return;
+        }
+        setError("Information saved. Could not refresh matches right now.");
+      }
     } catch (err: unknown) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         clearPatientSession();
@@ -464,7 +493,7 @@ export default function PatientPortalPage() {
           <div className="space-y-2 rounded-lg border border-border/60 bg-muted/20 p-3">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">History Log</p>
             {historyEntries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No entries yet beyond your initial profile.</p>
+              <p className="text-sm text-muted-foreground">No history entries yet.</p>
             ) : (
               historyEntries.slice(0, 6).map((entry) => (
                 <div key={entry.id} className="rounded-md border border-border/60 bg-background p-3">

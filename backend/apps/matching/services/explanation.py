@@ -199,8 +199,15 @@ def _generate_with_gemini(prompt: str, rule_result: Dict[str, Any]) -> Dict[str,
 
 
 def generate_explanation(
-    patient_payload: Dict[str, Any], trial_payload: Dict[str, Any], rule_result: Dict[str, Any]
+    patient_payload: Dict[str, Any],
+    trial_payload: Dict[str, Any],
+    rule_result: Dict[str, Any],
+    *,
+    allow_llm: bool = True,
 ) -> Dict[str, Any]:
+    if not allow_llm:
+        return _fallback(rule_result, reason="llm_budget_reached")
+
     mode = settings.LLM_MODE if settings.LLM_MODE in SUPPORTED_LLM_MODES else "auto"
     prompt = _build_prompt(patient_payload, trial_payload, rule_result)
     hf_ready = bool(settings.HF_LLM_ENDPOINT and settings.HF_API_TOKEN)

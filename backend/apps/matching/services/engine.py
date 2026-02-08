@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from django.conf import settings
 from django.db import connection
@@ -64,6 +64,38 @@ class MatchingRunAlreadyRunningError(RuntimeError):
     def __init__(self, running_run: MatchingRun | None = None):
         super().__init__("A matching run is already in progress.")
         self.running_run = running_run
+
+
+def is_matching_lock_free() -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [MATCHING_RUN_LOCK_KEY])
+        row = cursor.fetchone()
+        lock_acquired = bool(row and row[0])
+        if lock_acquired:
+            cursor.execute("SELECT pg_advisory_unlock(%s)", [MATCHING_RUN_LOCK_KEY])
+        return lock_acquired
+
+
+def reconcile_stale_running_runs() -> list[int]:
+    """
+    Mark stale runs as stopped when no matching lock is active.
+    """
+    running_ids = list(MatchingRun.objects.filter(status="running").values_list("id", flat=True))
+    if not running_ids:
+        return []
+    if not is_matching_lock_free():
+        return []
+
+    now = timezone.now()
+    stopped_ids: list[int] = []
+    for run in MatchingRun.objects.filter(id__in=running_ids, status="running"):
+        metadata = run.metadata if isinstance(run.metadata, dict) else {}
+        run.status = "stopped"
+        run.finished_at = now
+        run.metadata = {**metadata, "stopped_reason": "stale_without_lock", "stopped_at": now.isoformat()}
+        run.save(update_fields=["status", "finished_at", "metadata", "updated_at"])
+        stopped_ids.append(run.id)
+    return stopped_ids
 
 
 @dataclass
@@ -454,7 +486,11 @@ def ensure_patient_embedding(patient: PatientProfile) -> None:
     patient.save(update_fields=["embedding_vector", "updated_at"])
 
 
-def evaluate_patient_against_trials(patient: PatientProfile, run: MatchingRun | None = None) -> int:
+def evaluate_patient_against_trials(
+    patient: PatientProfile,
+    run: MatchingRun | None = None,
+    llm_state: dict[str, Any] | None = None,
+) -> int:
     if not _has_meaningful_clinical_context(patient):
         MatchEvaluation.objects.filter(patient=patient).delete()
         return 0
@@ -466,10 +502,18 @@ def evaluate_patient_against_trials(patient: PatientProfile, run: MatchingRun | 
     for candidate in candidates:
         trial = candidate.trial
         rule_result = _evaluate_rules(patient, trial, candidate.similarity)
+        llm_budget_reached = False
+        if llm_state is not None:
+            used = int(llm_state.get("used", 0))
+            budget = int(llm_state.get("budget", 0))
+            llm_budget_reached = used >= max(0, budget)
+            if not llm_budget_reached:
+                llm_state["used"] = used + 1
         explanation = generate_explanation(
             _build_patient_payload(patient),
             _build_trial_payload(trial),
             rule_result,
+            allow_llm=not llm_budget_reached,
         )
 
         existed_before = MatchEvaluation.objects.filter(patient=patient, trial=trial).exists()
@@ -508,6 +552,8 @@ def evaluate_patient_against_trials(patient: PatientProfile, run: MatchingRun | 
 
 
 def run_full_matching_cycle(run_type: str = "scheduled") -> MatchingRun:
+    reconcile_stale_running_runs()
+
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_try_advisory_lock(%s)", [MATCHING_RUN_LOCK_KEY])
         lock_row = cursor.fetchone()
@@ -524,6 +570,11 @@ def run_full_matching_cycle(run_type: str = "scheduled") -> MatchingRun:
         patients = PatientProfile.objects.select_related("organization").all()
         total_patients = patients.count()
         processed_patients = 0
+        started_at = timezone.now()
+        llm_state: dict[str, Any] = {
+            "used": 0,
+            "budget": max(0, int(settings.MATCH_LLM_MAX_CALLS_PER_RUN)),
+        }
 
         for patient in patients:
             live_metadata = MatchingRun.objects.filter(id=run.id).values_list("metadata", flat=True).first()
@@ -535,16 +586,52 @@ def run_full_matching_cycle(run_type: str = "scheduled") -> MatchingRun:
                     "updates": total_updates,
                     "processed_patients": processed_patients,
                     "stopped_reason": "stop_requested",
+                    "llm_calls_used": llm_state["used"],
+                    "llm_calls_budget": llm_state["budget"],
                 }
                 run.finished_at = timezone.now()
                 run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
                 return run
 
-            total_updates += evaluate_patient_against_trials(patient, run=run)
+            elapsed_seconds = int((timezone.now() - started_at).total_seconds())
+            if elapsed_seconds >= max(1, int(settings.MATCH_MAX_RUN_SECONDS)):
+                run.status = "stopped"
+                run.metadata = {
+                    **(live_metadata if isinstance(live_metadata, dict) else {}),
+                    "patients": total_patients,
+                    "updates": total_updates,
+                    "processed_patients": processed_patients,
+                    "stopped_reason": "max_run_seconds_exceeded",
+                    "max_run_seconds": int(settings.MATCH_MAX_RUN_SECONDS),
+                    "elapsed_seconds": elapsed_seconds,
+                    "llm_calls_used": llm_state["used"],
+                    "llm_calls_budget": llm_state["budget"],
+                }
+                run.finished_at = timezone.now()
+                run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
+                return run
+
+            total_updates += evaluate_patient_against_trials(patient, run=run, llm_state=llm_state)
             processed_patients += 1
+            run.metadata = {
+                "patients": total_patients,
+                "updates": total_updates,
+                "processed_patients": processed_patients,
+                "elapsed_seconds": elapsed_seconds,
+                "llm_calls_used": llm_state["used"],
+                "llm_calls_budget": llm_state["budget"],
+            }
+            run.save(update_fields=["metadata", "updated_at"])
 
         run.status = "completed"
-        run.metadata = {"patients": total_patients, "updates": total_updates}
+        run.metadata = {
+            "patients": total_patients,
+            "updates": total_updates,
+            "processed_patients": processed_patients,
+            "elapsed_seconds": int((timezone.now() - started_at).total_seconds()),
+            "llm_calls_used": llm_state["used"],
+            "llm_calls_budget": llm_state["budget"],
+        }
         run.finished_at = timezone.now()
         run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
         return run

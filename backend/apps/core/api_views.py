@@ -20,6 +20,7 @@ from apps.matching.serializers import MatchEvaluationSerializer, MatchingRunSeri
 from apps.matching.services.engine import (
     MatchingRunAlreadyRunningError,
     evaluate_patient_against_trials,
+    reconcile_stale_running_runs,
     run_full_matching_cycle,
 )
 from apps.outreach.models import OutreachMessage
@@ -50,6 +51,69 @@ def _build_combined_history_text(patient: PatientProfile) -> str:
     if cleaned:
         return "\n\n".join(cleaned)
     return (patient.story or "").strip()
+
+
+def _ensure_ai_structured_profile(patient: PatientProfile) -> None:
+    """
+    Backfill structured profile + AI summary for legacy patients that were
+    created before AI story normalization was introduced.
+    """
+    structured = patient.structured_profile if isinstance(patient.structured_profile, dict) else {}
+    has_ai_summary = isinstance(structured.get("ai_summary"), str) and bool(str(structured.get("ai_summary")).strip())
+    if has_ai_summary:
+        return
+
+    combined_story = _build_combined_history_text(patient)
+    if not combined_story:
+        return
+
+    inferred = infer_structured_profile(combined_story)
+    embedding = generate_patient_embedding(
+        {
+            "name": patient.full_name,
+            "age": patient.age,
+            "sex": patient.sex,
+            "city": patient.city,
+            "country": patient.country,
+            "story": combined_story,
+        },
+        inferred,
+    )
+
+    patient.story = combined_story
+    patient.structured_profile = inferred
+    patient.embedding_vector = embedding
+    if inferred.get("diagnosis"):
+        patient.diagnosis = str(inferred.get("diagnosis", ""))
+    if inferred.get("stage"):
+        patient.stage = str(inferred.get("stage", ""))
+    patient.save(
+        update_fields=[
+            "story",
+            "structured_profile",
+            "embedding_vector",
+            "diagnosis",
+            "stage",
+            "updated_at",
+        ]
+    )
+
+
+def _ensure_initial_history_entry(patient: PatientProfile) -> None:
+    """
+    Backfill initial intake history for legacy rows where story exists
+    but no history entries were created.
+    """
+    if patient.history_entries.exists():
+        return
+    story = (patient.story or "").strip()
+    if not story:
+        return
+    PatientHistoryEntry.objects.create(
+        patient=patient,
+        source=PatientHistoryEntry.Source.INTAKE,
+        entry_text=story,
+    )
 
 
 def _resolve_intake_organization(payload: dict) -> Organization:
@@ -138,6 +202,7 @@ class CoordinatorDashboardView(APIView):
     permission_classes = [IsCoordinatorOrAdmin]
 
     def get(self, request):
+        reconcile_stale_running_runs()
         org = getattr(request.user, "organization", None)
         if not org:
             return Response({"detail": "User has no organization"}, status=400)
@@ -225,6 +290,7 @@ class CoordinatorPatientDetailView(APIView):
             return Response({"detail": "User has no organization"}, status=400)
 
         patient = get_object_or_404(PatientProfile, id=id, organization=org)
+        _ensure_ai_structured_profile(patient)
         documents = patient.documents.order_by("-created_at")
         history_entries = patient.history_entries.order_by("-created_at")
         matches = (
@@ -472,12 +538,14 @@ class PatientHistoryView(APIView):
     def get(self, request, patient_id: int):
         _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
+        _ensure_initial_history_entry(patient)
         entries = patient.history_entries.order_by("-created_at")
         return Response(PatientHistoryEntrySerializer(entries, many=True).data)
 
     def post(self, request, patient_id: int):
         _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
+        _ensure_initial_history_entry(patient)
         serializer = PatientHistoryEntryCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -628,6 +696,7 @@ class MatchingRunNowView(APIView):
     permission_classes = [IsCoordinatorOrAdmin]
 
     def post(self, request):
+        reconcile_stale_running_runs()
         try:
             run = run_full_matching_cycle(run_type="manual")
         except MatchingRunAlreadyRunningError as exc:

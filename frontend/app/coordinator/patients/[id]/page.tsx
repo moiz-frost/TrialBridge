@@ -167,6 +167,16 @@ export default function CoordinatorPatientDetailPage({
     );
   }
 
+  const structuredProfile = (data.patient.structuredProfile ?? {}) as Record<string, unknown>;
+  const aiSummary =
+    typeof structuredProfile.ai_summary === "string" && structuredProfile.ai_summary.trim()
+      ? structuredProfile.ai_summary.trim()
+      : (data.patient.story || "").trim();
+  const originalStory =
+    typeof structuredProfile.raw_story === "string" && structuredProfile.raw_story.trim()
+      ? structuredProfile.raw_story.trim()
+      : (data.patient.story || "").trim();
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -238,12 +248,27 @@ export default function CoordinatorPatientDetailPage({
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Patient Story</CardTitle>
+            <CardTitle className="text-base">Patient Narrative</CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="rounded-lg bg-muted/50 p-3 text-sm leading-relaxed text-foreground">
-              {data.patient.story || "No story submitted."}
-            </p>
+          <CardContent className="space-y-3">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <div className="mb-1 flex items-center gap-2">
+                <Badge variant="outline" className="border-primary/30 text-primary">
+                  AI Clinical Summary
+                </Badge>
+              </div>
+              <p className="text-sm leading-relaxed text-foreground">
+                {aiSummary || "No AI summary available yet."}
+              </p>
+            </div>
+            <div className="rounded-lg bg-muted/50 p-3">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Original Patient Text
+              </p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                {originalStory || "No story submitted."}
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>

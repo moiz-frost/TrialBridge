@@ -167,6 +167,7 @@ async function fetchJson<T>(
 }
 
 function mapPatient(raw: JsonObject): Patient {
+  const structured = raw.structured_profile;
   return {
     id: String(raw.id ?? raw.patient_code ?? ""),
     name: String(raw.full_name ?? ""),
@@ -182,6 +183,10 @@ function mapPatient(raw: JsonObject): Patient {
     contactInfo: String(raw.contactInfo ?? raw.contact_value ?? ""),
     registeredAt: String(raw.registered_at ?? ""),
     profileCompleteness: Number(raw.profile_completeness ?? 0),
+    structuredProfile:
+      structured && typeof structured === "object"
+        ? (structured as Record<string, unknown>)
+        : {},
   };
 }
 

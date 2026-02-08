@@ -5,6 +5,7 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from apps.core.models import Organization
+from apps.matching.models import MatchingRun
 from apps.matching.services.engine import MatchingRunAlreadyRunningError
 
 
@@ -63,3 +64,22 @@ class CoordinatorAuthApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("detail", response.data)
+
+    def test_dashboard_reconciles_stale_running_run(self):
+        stale = MatchingRun.objects.create(run_type="manual", status="running")
+
+        login = self.client.post(
+            "/api/v1/auth/login/",
+            {"username": "auth_coordinator", "password": "strong-pass-123"},
+            format="json",
+        )
+        self.assertEqual(login.status_code, 200)
+        token = login.data["access"]
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        dashboard = self.client.get("/api/v1/coordinator/dashboard/")
+        self.assertEqual(dashboard.status_code, 200)
+
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, "stopped")
+        self.assertFalse(dashboard.data["matching"]["is_running"])
