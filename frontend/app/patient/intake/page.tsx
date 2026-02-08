@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
@@ -104,8 +105,11 @@ export default function PatientIntakePage() {
   const clampedStep = Math.max(1, Math.min(step, TOTAL_STEPS));
   const progress = TOTAL_STEPS > 1 ? ((clampedStep - 1) / (TOTAL_STEPS - 1)) * 100 : 100;
   const isCompleted = step > TOTAL_STEPS;
+  const activeError = submitError || stepError;
 
   const updateField = (field: string, value: string | boolean) => {
+    setStepError("");
+    setSubmitError("");
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -138,11 +142,18 @@ export default function PatientIntakePage() {
     }
 
     if (stepNumber === 2) {
-      return validateNarrativeText(formData.story, {
+      const narrativeError = validateNarrativeText(formData.story, {
         minLength: 35,
         minTokens: 8,
-        requireMedicalSignal: true,
+        requireMedicalSignal: false,
       });
+      if (!narrativeError) {
+        return null;
+      }
+      if (selectedFiles.length > 0) {
+        return null;
+      }
+      return narrativeError;
     }
 
     if (stepNumber === 3) {
@@ -406,6 +417,9 @@ export default function PatientIntakePage() {
                 symptoms, and any test results you remember. You can write in
                 English, Urdu, or Arabic.
               </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                You can continue with your written story, uploaded documents, or both.
+              </p>
               <Textarea
                 id="story"
                 placeholder="Example: I was diagnosed with breast cancer 2 years ago. I received chemotherapy and the tumor was removed by surgery. Recently, the cancer has come back and spread to my liver. My doctor says it is HER2-positive. I have tried trastuzumab but it stopped working..."
@@ -433,6 +447,8 @@ export default function PatientIntakePage() {
                 id="patient-documents"
                 onChange={(event) => {
                   const files = Array.from(event.target.files || []);
+                  setStepError("");
+                  setSubmitError("");
                   setSelectedFiles(files);
                 }}
               />
@@ -663,7 +679,18 @@ export default function PatientIntakePage() {
       )}
 
       {!isCompleted && (
-        <div className="mt-6 flex items-center justify-between">
+        <div className="mt-6">
+          {activeError && (
+            <div
+              role="alert"
+              className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{activeError}</p>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
           {step > 1 ? (
             <Button
               variant="outline"
@@ -695,13 +722,8 @@ export default function PatientIntakePage() {
               {isSubmitting ? "Submitting..." : "Submit"}
             </Button>
           )}
+          </div>
         </div>
-      )}
-      {stepError && (
-        <p className="mt-3 text-xs text-[hsl(var(--warning))]">{stepError}</p>
-      )}
-      {submitError && (
-        <p className="mt-3 text-xs text-[hsl(var(--warning))]">{submitError}</p>
       )}
 
       {step > TOTAL_STEPS && (
