@@ -40,14 +40,17 @@ if [[ -L "$DEFAULT_ENABLED" || -f "$DEFAULT_ENABLED" ]]; then
 fi
 
 $SUDO nginx -t
-if ! $SUDO systemctl is-active --quiet nginx; then
+if $SUDO systemctl is-active --quiet nginx; then
+  $SUDO systemctl reload nginx || $SUDO systemctl restart nginx
+elif $SUDO pgrep -x nginx >/dev/null 2>&1; then
+  echo "nginx process is running outside systemd. Reloading with nginx -s reload..."
+  $SUDO nginx -s reload || true
+else
   echo "nginx.service is not active. Starting and enabling nginx..."
   $SUDO systemctl enable --now nginx
-else
-  $SUDO systemctl reload nginx || $SUDO systemctl restart nginx
 fi
 
-if ! $SUDO systemctl is-active --quiet nginx; then
+if ! $SUDO systemctl is-active --quiet nginx && ! $SUDO pgrep -x nginx >/dev/null 2>&1; then
   echo "Host nginx failed to start/reload. Port owners on 80/443:"
   $SUDO ss -ltnp | grep -E ":(80|443) " || true
   echo "If docker is occupying 80/443, stop the conflicting containers and rerun this script."
