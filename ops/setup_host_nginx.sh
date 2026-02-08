@@ -40,7 +40,12 @@ if [[ -L "$DEFAULT_ENABLED" || -f "$DEFAULT_ENABLED" ]]; then
 fi
 
 $SUDO nginx -t
-$SUDO systemctl reload nginx
+if ! $SUDO systemctl is-active --quiet nginx; then
+  echo "nginx.service is not active. Starting and enabling nginx..."
+  $SUDO systemctl enable --now nginx
+else
+  $SUDO systemctl reload nginx
+fi
 
 echo "Nginx host proxy configured successfully."
 echo "Next: run certbot for TLS:"
