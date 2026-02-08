@@ -35,10 +35,51 @@ import {
   normalizeWhitespace,
   validateContactInfo,
   validateNarrativeText,
+  normalizePhoneDigits,
 } from "@/lib/validation";
 
 const TOTAL_STEPS = 4;
 const STEP_LABELS = ["Basic Info", "Medical Story", "Contact", "Review"] as const;
+const PHONE_COUNTRY_CODES = [
+  { value: "+92", label: "Pakistan (+92)" },
+  { value: "+971", label: "UAE (+971)" },
+  { value: "+966", label: "Saudi Arabia (+966)" },
+  { value: "+968", label: "Oman (+968)" },
+  { value: "+973", label: "Bahrain (+973)" },
+  { value: "+974", label: "Qatar (+974)" },
+  { value: "+965", label: "Kuwait (+965)" },
+  { value: "+91", label: "India (+91)" },
+  { value: "+1", label: "US/Canada (+1)" },
+  { value: "+44", label: "UK (+44)" },
+] as const;
+
+function composeContactInfo(channel: string, contactInfo: string, countryCode: string): string {
+  const normalizedContact = normalizeWhitespace(contactInfo);
+  if (!normalizedContact) {
+    return "";
+  }
+
+  if (channel === "email") {
+    return normalizedContact;
+  }
+
+  const digitsOnly = normalizePhoneDigits(normalizedContact);
+  if (!digitsOnly) {
+    return "";
+  }
+
+  if (normalizedContact.startsWith("+") || normalizedContact.startsWith("00")) {
+    return `+${digitsOnly}`;
+  }
+
+  const codeDigits = normalizePhoneDigits(countryCode);
+  const localDigits = digitsOnly.replace(/^0+/, "");
+  if (localDigits.startsWith(codeDigits)) {
+    return `+${localDigits}`;
+  }
+
+  return `+${codeDigits}${localDigits || digitsOnly}`;
+}
 
 export default function PatientIntakePage() {
   const [step, setStep] = useState(1);
@@ -54,6 +95,7 @@ export default function PatientIntakePage() {
     country: "",
     language: "",
     contactChannel: "",
+    contactCountryCode: "+92",
     contactInfo: "",
     story: "",
     consent: false,
@@ -61,6 +103,7 @@ export default function PatientIntakePage() {
 
   const clampedStep = Math.max(1, Math.min(step, TOTAL_STEPS));
   const progress = TOTAL_STEPS > 1 ? ((clampedStep - 1) / (TOTAL_STEPS - 1)) * 100 : 100;
+  const isCompleted = step > TOTAL_STEPS;
 
   const updateField = (field: string, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -106,7 +149,12 @@ export default function PatientIntakePage() {
       if (!formData.contactChannel) {
         return "Please choose a preferred contact method.";
       }
-      const contactError = validateContactInfo(formData.contactInfo, formData.contactChannel);
+      const preparedContactInfo = composeContactInfo(
+        formData.contactChannel,
+        formData.contactInfo,
+        formData.contactCountryCode,
+      );
+      const contactError = validateContactInfo(preparedContactInfo, formData.contactChannel);
       if (contactError) {
         return contactError;
       }
@@ -149,12 +197,18 @@ export default function PatientIntakePage() {
     }
     setIsSubmitting(true);
 
+    const { contactCountryCode, ...formDataWithoutCountryCode } = formData;
+    const preparedContactInfo = composeContactInfo(
+      formData.contactChannel,
+      formData.contactInfo,
+      contactCountryCode,
+    );
     const payload = {
-      ...formData,
+      ...formDataWithoutCountryCode,
       name: normalizeWhitespace(formData.name),
       age: String(Math.round(Number(formData.age))),
       city: normalizeWhitespace(formData.city),
-      contactInfo: normalizeWhitespace(formData.contactInfo),
+      contactInfo: preparedContactInfo,
       story: normalizeWhitespace(formData.story),
     };
 
@@ -213,25 +267,27 @@ export default function PatientIntakePage() {
         </p>
       </div>
 
-      <div className="mb-6">
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Step {step} of {TOTAL_STEPS}
-          </span>
-          <span>{Math.round(progress)}% complete</span>
-        </div>
-        <Progress value={progress} className="mt-2 h-2" />
-        <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-          {STEP_LABELS.map((label, index) => (
-            <span
-              key={label}
-              className={step >= index + 1 ? "font-medium text-primary" : ""}
-            >
-              {label}
+      {!isCompleted && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              Step {clampedStep} of {TOTAL_STEPS}
             </span>
-          ))}
+            <span>{Math.round(progress)}% complete</span>
+          </div>
+          <Progress value={progress} className="mt-2 h-2" />
+          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
+            {STEP_LABELS.map((label, index) => (
+              <span
+                key={label}
+                className={clampedStep >= index + 1 ? "font-medium text-primary" : ""}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {step === 1 && (
         <Card>
@@ -447,22 +503,54 @@ export default function PatientIntakePage() {
             </div>
 
             <div>
-              <Label htmlFor="contactInfo">
-                {formData.contactChannel === "email"
-                  ? "Email Address"
-                  : "Phone Number"}
-              </Label>
-              <Input
-                id="contactInfo"
-                placeholder={
-                  formData.contactChannel === "email"
-                    ? "your@email.com"
-                    : "+92-300-1234567"
-                }
-                value={formData.contactInfo}
-                onChange={(e) => updateField("contactInfo", e.target.value)}
-                className="mt-1.5"
-              />
+              {formData.contactChannel === "email" ? (
+                <>
+                  <Label htmlFor="contactInfo">Email Address</Label>
+                  <Input
+                    id="contactInfo"
+                    placeholder="your@email.com"
+                    value={formData.contactInfo}
+                    onChange={(e) => updateField("contactInfo", e.target.value)}
+                    className="mt-1.5"
+                  />
+                </>
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
+                    <div>
+                      <Label>Country Code</Label>
+                      <Select
+                        value={formData.contactCountryCode}
+                        onValueChange={(v) => updateField("contactCountryCode", v)}
+                      >
+                        <SelectTrigger className="mt-1.5">
+                          <SelectValue placeholder="Select code" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PHONE_COUNTRY_CODES.map((code) => (
+                            <SelectItem key={code.value} value={code.value}>
+                              {code.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="contactInfo">Phone Number</Label>
+                      <Input
+                        id="contactInfo"
+                        placeholder="3001234567"
+                        value={formData.contactInfo}
+                        onChange={(e) => updateField("contactInfo", e.target.value)}
+                        className="mt-1.5"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Enter your local number. We will add the selected country code automatically.
+                  </p>
+                </>
+              )}
             </div>
 
             <div className="rounded-lg border border-border bg-muted/30 p-4">
@@ -520,7 +608,11 @@ export default function PatientIntakePage() {
                 label="Contact"
                 value={
                   formData.contactChannel
-                    ? `${formData.contactChannel.toUpperCase()}: ${formData.contactInfo || "Not set"}`
+                    ? `${formData.contactChannel.toUpperCase()}: ${composeContactInfo(
+                        formData.contactChannel,
+                        formData.contactInfo,
+                        formData.contactCountryCode,
+                      ) || "Not set"}`
                     : "Not provided"
                 }
               />
@@ -568,39 +660,41 @@ export default function PatientIntakePage() {
         </Card>
       )}
 
-      <div className="mt-6 flex items-center justify-between">
-        {step > 1 ? (
-          <Button
-            variant="outline"
-            onClick={() => setStep((s) => s - 1)}
-            className="gap-1.5"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </Button>
-        ) : (
-        <div />
-        )}
+      {!isCompleted && (
+        <div className="mt-6 flex items-center justify-between">
+          {step > 1 ? (
+            <Button
+              variant="outline"
+              onClick={() => setStep((s) => s - 1)}
+              className="gap-1.5"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </Button>
+          ) : (
+            <div />
+          )}
 
-        {step < TOTAL_STEPS ? (
-          <Button
-            onClick={goNext}
-            className="gap-1.5"
-          >
-            Next
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            onClick={handleSubmit}
-            className="gap-1.5"
-            disabled={isSubmitting}
-          >
-            <CheckCircle2 className="h-4 w-4" />
-            {isSubmitting ? "Submitting..." : "Submit"}
-          </Button>
-        )}
-      </div>
+          {step < TOTAL_STEPS ? (
+            <Button
+              onClick={goNext}
+              className="gap-1.5"
+            >
+              Next
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              onClick={handleSubmit}
+              className="gap-1.5"
+              disabled={isSubmitting}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {isSubmitting ? "Submitting..." : "Submit"}
+            </Button>
+          )}
+        </div>
+      )}
       {stepError && (
         <p className="mt-3 text-xs text-[hsl(var(--warning))]">{stepError}</p>
       )}
