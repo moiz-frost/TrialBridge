@@ -28,4 +28,12 @@ docker compose "${COMPOSE_ARGS[@]}" exec -T api python manage.py seed_coordinato
   --password "$DEMO_PASSWORD" \
   "${EXTRA_ARGS[@]}"
 
+echo ""
+echo "Coordinator credentials:"
+cat <<EOF
+  - coord_aga   / ${DEMO_PASSWORD}   (Aga Khan University Hospital)
+  - coord_abu   / ${DEMO_PASSWORD}   (Cleveland Clinic Abu Dhabi)
+  - coord_dubai / ${DEMO_PASSWORD}   (Saudi German Hospital Dubai)
+EOF
+
 echo "Done."
