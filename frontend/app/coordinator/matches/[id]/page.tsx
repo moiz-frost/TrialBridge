@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import { formatFriendlyDate, formatFriendlyDateTime, formatRelativeUpdate } from "@/lib/date";
 import { SHOW_TECHNICAL_COPY, audienceCopy } from "@/lib/dev-mode";
+import { normalizeWhitespace } from "@/lib/validation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -178,11 +179,17 @@ export default function MatchDetailPage({
 
   const onSendOutreach = async () => {
     if (!match) return;
+    const normalizedBody = normalizeWhitespace(outreachBody || buildOutreachBody(match));
+    if (normalizedBody.length < 10) {
+      setError("Please write a message with at least 10 characters before sending.");
+      setStatusMessage("");
+      return;
+    }
     setSendingOutreach(true);
     setError("");
     setStatusMessage("");
     try {
-      await sendOutreach(match.id, outreachChannel, outreachBody || buildOutreachBody(match));
+      await sendOutreach(match.id, outreachChannel, normalizedBody);
       const [refreshed, refreshedOutreach] = await Promise.all([getMatchDetail(id), getOutreachMessages()]);
       setMatch(refreshed);
       setOutreachActivity(refreshedOutreach.filter((item) => String(item.match) === String(refreshed.id)));

@@ -84,6 +84,21 @@ docker compose exec api python manage.py ingest_trials --source ctgov --limit 20
 docker compose exec api python manage.py run_matching --run-type manual
 ```
 
+## Code Quality
+
+Run all quality checks before pushing:
+
+```bash
+./ops/quality_check.sh
+```
+
+What it runs:
+
+- Frontend type checks
+- Frontend lint in strict mode (warnings fail CI)
+- Backend lint (`ruff`)
+- Targeted backend tests for matching + patient upload/history
+
 ## Backups (self-hosted Postgres)
 
 Use scripts under `ops/`:

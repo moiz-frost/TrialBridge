@@ -92,3 +92,27 @@ class MatchingEngineTests(TestCase):
         self.assertEqual(top.trial.trial_id, "NCT-MATCH-001")
         self.assertGreaterEqual(top.eligibility_score, 60)
         self.assertIn(top.overall_status, {"Eligible", "Possibly Eligible", "Unlikely"})
+
+    def test_engine_skips_gibberish_story(self):
+        gibberish_patient = PatientProfile.objects.create(
+            patient_code="PAT-9002",
+            organization=self.org,
+            full_name="Gibberish Intake Patient",
+            age=39,
+            sex="female",
+            city="Karachi",
+            country="Pakistan",
+            language="English",
+            diagnosis="",
+            stage="",
+            story="asdf qwer zxcv qqqqq 12345 lorem ipsum blabla",
+            structured_profile={"markers": [], "raw_story": "asdf qwer zxcv qqqqq 12345 lorem ipsum blabla"},
+            contact_channel="email",
+            contact_value="gibberish.patient@example.com",
+            consent=True,
+            profile_completeness=70,
+        )
+
+        updates = evaluate_patient_against_trials(gibberish_patient)
+        self.assertEqual(updates, 0)
+        self.assertFalse(MatchEvaluation.objects.filter(patient=gibberish_patient).exists())

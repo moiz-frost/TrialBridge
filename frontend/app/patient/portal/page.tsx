@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  ApiError,
   ENABLE_MOCK_FALLBACK,
   addPatientHistoryEntry,
   getPatientHistoryEntries,
@@ -16,8 +17,9 @@ import {
   type PatientHistoryEntryItem,
 } from "@/lib/api";
 import type { MatchEvaluation } from "@/lib/mock-data";
-import { getPatientSession } from "@/lib/patient-session";
+import { clearPatientSession, getPatientSession } from "@/lib/patient-session";
 import { formatFriendlyDateTime, formatRelativeUpdate } from "@/lib/date";
+import { normalizeWhitespace, validateNarrativeText } from "@/lib/validation";
 import {
   CheckCircle2,
   Clock,
@@ -253,8 +255,13 @@ export default function PatientPortalPage() {
         setExpandedMatch(mapped[0].id);
         setError("");
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!mounted) return;
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          clearPatientSession();
+          router.replace("/patient/login?next=/patient/portal");
+          return;
+        }
         if (ENABLE_MOCK_FALLBACK) {
           setPatientMatchResults(defaultPatientMatchResults);
           setHistoryEntries([]);
@@ -276,9 +283,14 @@ export default function PatientPortalPage() {
 
   const handleAddHistory = async () => {
     if (!patientId) return;
-    const entryText = historyDraft.trim();
-    if (entryText.length < 5) {
-      setHistoryError("Please add a bit more detail before saving.");
+    const entryText = normalizeWhitespace(historyDraft);
+    const narrativeError = validateNarrativeText(entryText, {
+      minLength: 20,
+      minTokens: 4,
+      requireMedicalSignal: true,
+    });
+    if (narrativeError) {
+      setHistoryError(narrativeError);
       return;
     }
 
@@ -308,7 +320,12 @@ export default function PatientPortalPage() {
           : "Information added. Your profile and matches were refreshed.",
       );
       setError(mappedMatches.length === 0 ? "No matched trials available yet." : "");
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        clearPatientSession();
+        router.replace("/patient/login?next=/patient/portal");
+        return;
+      }
       setHistoryError("Could not add information right now. Please try again.");
     } finally {
       setIsSubmittingHistory(false);

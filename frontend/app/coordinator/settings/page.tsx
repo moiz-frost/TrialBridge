@@ -216,6 +216,17 @@ export default function CoordinatorSettingsPage() {
     parsedWeights.explainability !== loadedWeights.explainability;
 
   const save = async () => {
+    const invalidEntry = (Object.keys(weightInputs) as WeightKey[]).find((key) => {
+      const raw = weightInputs[key].trim();
+      if (raw === "" || raw === ".") return true;
+      const parsed = Number(raw);
+      return Number.isNaN(parsed) || parsed < 0 || parsed > 1;
+    });
+    if (invalidEntry) {
+      showNotice("error", "Each weight must be a number between 0 and 1.");
+      return;
+    }
+
     if (!hasChanges) {
       showNotice("info", "No changes to save.");
       return;

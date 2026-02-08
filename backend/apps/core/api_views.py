@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db.models import Avg
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, parsers, permissions, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -13,7 +14,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.accounts.models import User
 from apps.core.models import Organization
-from apps.core.permissions import IsCoordinatorOrAdmin
+from apps.core.permissions import IsAuthenticatedPatientPortal, IsCoordinatorOrAdmin
 from apps.matching.models import MatchEvaluation
 from apps.matching.serializers import MatchEvaluationSerializer, MatchingRunSerializer
 from apps.matching.services.engine import evaluate_patient_against_trials, run_full_matching_cycle
@@ -33,6 +34,7 @@ from apps.patients.services.profile import (
     generate_patient_embedding,
     infer_structured_profile,
 )
+from apps.patients.services.access_token import issue_patient_portal_token
 from apps.patients.services.document_extraction import extract_document_text, is_supported_text_document
 from apps.trials.models import Trial
 from apps.trials.serializers import TrialSerializer
@@ -44,6 +46,14 @@ def _build_combined_history_text(patient: PatientProfile) -> str:
     if cleaned:
         return "\n\n".join(cleaned)
     return (patient.story or "").strip()
+
+
+def _assert_patient_portal_scope(request, patient_id: int) -> None:
+    portal_auth = getattr(request, "patient_portal_auth", None)
+    payload = portal_auth if isinstance(portal_auth, dict) else {}
+    token_patient_id = payload.get("patient_id")
+    if int(token_patient_id or -1) != int(patient_id):
+        raise PermissionDenied("You are not allowed to access this patient profile.")
 
 
 class HealthCheckView(APIView):
@@ -304,12 +314,14 @@ class PatientIntakeView(APIView):
             )
 
         evaluate_patient_against_trials(patient)
+        patient_token = issue_patient_portal_token(patient.id, patient.patient_code)
 
         return Response(
             {
                 "patient_id": patient.id,
                 "patient_code": patient.patient_code,
                 "name": patient.full_name,
+                "patient_token": patient_token,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -371,36 +383,41 @@ class PatientAccessView(APIView):
         if not provided_contact or expected_contact != provided_contact:
             return Response({"detail": "Contact info does not match our records"}, status=403)
 
+        patient_token = issue_patient_portal_token(patient.id, patient.patient_code)
         return Response(
             {
                 "patient_id": patient.id,
                 "patient_code": patient.patient_code,
                 "name": patient.full_name,
                 "contact_channel": patient.contact_channel,
+                "patient_token": patient_token,
             }
         )
 
 
 class PatientPortalMatchesView(generics.ListAPIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAuthenticatedPatientPortal]
     serializer_class = MatchEvaluationSerializer
 
     def get_queryset(self):
         patient_id = self.kwargs["patient_id"]
+        _assert_patient_portal_scope(self.request, patient_id)
         return MatchEvaluation.objects.select_related("patient", "trial").filter(patient_id=patient_id).order_by(
             "-eligibility_score"
         )
 
 
 class PatientHistoryView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAuthenticatedPatientPortal]
 
     def get(self, request, patient_id: int):
+        _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
         entries = patient.history_entries.order_by("-created_at")
         return Response(PatientHistoryEntrySerializer(entries, many=True).data)
 
     def post(self, request, patient_id: int):
+        _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
         serializer = PatientHistoryEntryCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -454,9 +471,10 @@ class PatientHistoryView(APIView):
 
 
 class PatientContactRequestView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAuthenticatedPatientPortal]
 
     def post(self, request, patient_id: int):
+        _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
         match_id = request.data.get("match_id")
         channel = str(request.data.get("channel", "")).strip().lower()
@@ -485,15 +503,17 @@ class PatientContactRequestView(APIView):
 
 
 class PatientDocumentUploadView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsAuthenticatedPatientPortal]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
 
     def get(self, request, patient_id: int):
+        _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
         docs = patient.documents.order_by("-created_at")
         return Response(PatientDocumentSerializer(docs, many=True).data)
 
     def post(self, request, patient_id: int):
+        _assert_patient_portal_scope(request, patient_id)
         patient = get_object_or_404(PatientProfile, id=patient_id)
         incoming = request.FILES.get("document")
         if incoming is None:

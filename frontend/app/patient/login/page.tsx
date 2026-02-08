@@ -11,6 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { patientAccess } from "@/lib/api";
 import { getPatientSession, setPatientSession } from "@/lib/patient-session";
+import {
+  normalizePatientCode,
+  normalizeWhitespace,
+  validateContactInfo,
+  validatePatientCode,
+} from "@/lib/validation";
 
 export default function PatientLoginPage() {
   const router = useRouter();
@@ -29,20 +35,30 @@ export default function PatientLoginPage() {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
-    const normalizedCode = patientCode.trim().toUpperCase();
-    const normalizedContact = contactInfo.trim();
-    if (!normalizedCode) {
-      setError("Please enter your patient code.");
+    const normalizedCode = normalizePatientCode(patientCode);
+    const normalizedContact = normalizeWhitespace(contactInfo);
+
+    const codeError = validatePatientCode(normalizedCode);
+    if (codeError) {
+      setError(codeError);
       return;
     }
-    if (!normalizedContact) {
-      setError("Please enter the same phone/email you used in intake.");
+
+    const contactError = validateContactInfo(normalizedContact);
+    if (contactError) {
+      setError(contactError);
       return;
     }
+
     setLoading(true);
     try {
       const result = await patientAccess(normalizedCode, normalizedContact);
-      setPatientSession(String(result.patient_id), result.patient_code, result.name || "Patient");
+      setPatientSession(
+        String(result.patient_id),
+        result.patient_code,
+        result.name || "Patient",
+        result.patient_token,
+      );
       router.replace("/patient/portal");
     } catch {
       setError("Could not verify patient access. Check patient code/contact info and try again.");

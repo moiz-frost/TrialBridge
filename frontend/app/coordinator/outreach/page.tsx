@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { audienceCopy } from "@/lib/dev-mode";
 import { formatFriendlyDateTime } from "@/lib/date";
+import { normalizeWhitespace } from "@/lib/validation";
 
 function OutreachSkeleton() {
   return (
@@ -100,11 +101,21 @@ export default function OutreachPage() {
   }
 
   const sendDemo = async () => {
+    const normalizedDraft = normalizeWhitespace(draft);
+    if (normalizedDraft.length < 10) {
+      setStatusMessage("");
+      setError("Please write a message with at least 10 characters.");
+      return;
+    }
     try {
       const liveMatches = await getMatches();
       const first = liveMatches[0];
-      if (!first) return;
-      await sendOutreach(first.id, "email", draft);
+      if (!first) {
+        setStatusMessage("");
+        setError("No matched patients are available to queue outreach.");
+        return;
+      }
+      await sendOutreach(first.id, "email", normalizedDraft);
       const refreshed = await getOutreachMessages();
       setMessages(refreshed);
       setStatusMessage(

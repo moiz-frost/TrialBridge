@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCurrentUser, loginCoordinator } from "@/lib/api";
 import { hasAuthToken } from "@/lib/auth";
+import { normalizeWhitespace } from "@/lib/validation";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,9 +46,18 @@ export default function LoginPage() {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
+    const normalizedUsername = normalizeWhitespace(username);
+    if (!normalizedUsername) {
+      setError("Please enter your username.");
+      return;
+    }
+    if (!password || password.trim().length < 4) {
+      setError("Please enter your password.");
+      return;
+    }
     setLoading(true);
     try {
-      await loginCoordinator(username, password);
+      await loginCoordinator(normalizedUsername, password);
       const user = await getCurrentUser();
       if (!["coordinator", "admin"].includes(user.role)) {
         setError("This account is not a coordinator/admin account.");

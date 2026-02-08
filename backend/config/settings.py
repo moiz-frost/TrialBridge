@@ -126,6 +126,16 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
 }
 
+if DEBUG:
+    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = (
+        "rest_framework.renderers.JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    )
+else:
+    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = (
+        "rest_framework.renderers.JSONRenderer",
+    )
+
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
@@ -155,6 +165,7 @@ MATCH_TOP_K = int(os.getenv("MATCH_TOP_K", "20"))
 MATCH_EVALUATE_TOP_N = int(os.getenv("MATCH_EVALUATE_TOP_N", "5"))
 ALLOW_ANONYMOUS_COORDINATOR = os.getenv("ALLOW_ANONYMOUS_COORDINATOR", "0") == "1"
 PATIENT_UPLOAD_MAX_MB = int(os.getenv("PATIENT_UPLOAD_MAX_MB", "10"))
+PATIENT_PORTAL_TOKEN_MAX_AGE_SECONDS = int(os.getenv("PATIENT_PORTAL_TOKEN_MAX_AGE_SECONDS", "1209600"))
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG

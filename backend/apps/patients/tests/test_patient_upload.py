@@ -1,9 +1,11 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
+from apps.patients.models import PatientProfile
+
 
 class PatientUploadApiTests(APITestCase):
-    def _create_patient(self) -> int:
+    def _create_patient(self) -> tuple[int, str]:
         intake_response = self.client.post(
             "/api/v1/patient/intake/",
             {
@@ -21,10 +23,11 @@ class PatientUploadApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(intake_response.status_code, 201)
-        return intake_response.data["patient_id"]
+        return intake_response.data["patient_id"], intake_response.data["patient_token"]
 
     def test_patient_intake_and_document_upload(self):
-        patient_id = self._create_patient()
+        patient_id, token = self._create_patient()
+        self.client.credentials(HTTP_X_PATIENT_TOKEN=token)
 
         upload = SimpleUploadedFile(
             "clinical-history.txt",
@@ -43,7 +46,8 @@ class PatientUploadApiTests(APITestCase):
         self.assertGreater(upload_response.data["extracted_text_chars"], 0)
 
     def test_rejects_unsupported_document_type(self):
-        patient_id = self._create_patient()
+        patient_id, token = self._create_patient()
+        self.client.credentials(HTTP_X_PATIENT_TOKEN=token)
         upload = SimpleUploadedFile(
             "scan-image.png",
             b"\x89PNG\r\n\x1a\nfakeimagebytes",
@@ -58,7 +62,8 @@ class PatientUploadApiTests(APITestCase):
         self.assertIn("Unsupported file type", upload_response.data.get("detail", ""))
 
     def test_patient_history_is_append_only(self):
-        patient_id = self._create_patient()
+        patient_id, token = self._create_patient()
+        self.client.credentials(HTTP_X_PATIENT_TOKEN=token)
 
         history_response = self.client.get(f"/api/v1/patient/{patient_id}/history/")
         self.assertEqual(history_response.status_code, 200)
@@ -78,3 +83,33 @@ class PatientUploadApiTests(APITestCase):
         updated_history_response = self.client.get(f"/api/v1/patient/{patient_id}/history/")
         self.assertEqual(updated_history_response.status_code, 200)
         self.assertGreaterEqual(len(updated_history_response.data), 2)
+
+    def test_rejects_missing_patient_token(self):
+        patient_id, _ = self._create_patient()
+        self.client.credentials()
+
+        response = self.client.get(f"/api/v1/patient/{patient_id}/history/")
+        self.assertEqual(response.status_code, 401)
+
+    def test_rejects_cross_patient_access_with_valid_token(self):
+        patient_id_a, token_a = self._create_patient()
+        patient_id_b, _ = self._create_patient()
+        self.client.credentials(HTTP_X_PATIENT_TOKEN=token_a)
+
+        response = self.client.get(f"/api/v1/patient/{patient_id_b}/history/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_patient_access_returns_patient_portal_token(self):
+        patient_id, _ = self._create_patient()
+        patient = PatientProfile.objects.get(id=patient_id)
+
+        access_response = self.client.post(
+            "/api/v1/patient/access/",
+            {
+                "patient_code": patient.patient_code,
+                "contact_info": patient.contact_value,
+            },
+            format="json",
+        )
+        self.assertEqual(access_response.status_code, 200)
+        self.assertIn("patient_token", access_response.data)

@@ -1,5 +1,6 @@
 import type { MatchEvaluation, Patient, Trial } from "@/lib/mock-data";
 import { clearAuthTokens, getAccessToken, getRefreshToken, setAuthTokens } from "@/lib/auth";
+import { getPatientSession } from "@/lib/patient-session";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000/api/v1";
 export const ENABLE_MOCK_FALLBACK = process.env.NEXT_PUBLIC_ENABLE_MOCK_FALLBACK === "1";
@@ -72,16 +73,24 @@ export class ApiError extends Error {
 interface FetchOptions {
   allowUnauthorized?: boolean;
   skipJsonContentType?: boolean;
+  includePatientToken?: boolean;
+  patientToken?: string;
 }
 
-function buildHeaders(init?: RequestInit, skipJsonContentType?: boolean): Headers {
+function buildHeaders(init?: RequestInit, options?: FetchOptions): Headers {
   const headers = new Headers(init?.headers || {});
-  if (!skipJsonContentType && !headers.has("Content-Type")) {
+  if (!options?.skipJsonContentType && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   const accessToken = getAccessToken();
   if (accessToken && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+  if (options?.includePatientToken && !headers.has("X-Patient-Token")) {
+    const token = options.patientToken || getPatientSession()?.token;
+    if (token) {
+      headers.set("X-Patient-Token", token);
+    }
   }
   return headers;
 }
@@ -131,7 +140,7 @@ async function fetchJson<T>(
   const run = async (authRetry: boolean): Promise<Response> => {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: buildHeaders(init, options?.skipJsonContentType),
+      headers: buildHeaders(init, options),
       cache: "no-store",
     });
 
@@ -345,7 +354,7 @@ export async function submitPatientIntake(payload: {
   story: string;
   consent: boolean;
 }) {
-  return fetchJson<{ patient_id: number; patient_code: string; name?: string }>("/patient/intake/", {
+  return fetchJson<{ patient_id: number; patient_code: string; name?: string; patient_token: string }>("/patient/intake/", {
     method: "POST",
     body: JSON.stringify({
       ...payload,
@@ -360,6 +369,7 @@ export async function patientAccess(patientCode: string, contactInfo: string) {
     patient_code: string;
     name: string;
     contact_channel: string;
+    patient_token: string;
   }>(
     "/patient/access/",
     {
@@ -373,7 +383,7 @@ export async function patientAccess(patientCode: string, contactInfo: string) {
   );
 }
 
-export async function uploadPatientDocument(patientId: number, document: File) {
+export async function uploadPatientDocument(patientId: number, document: File, patientToken?: string) {
   const formData = new FormData();
   formData.append("document", document);
 
@@ -383,13 +393,19 @@ export async function uploadPatientDocument(patientId: number, document: File) {
       method: "POST",
       body: formData,
     },
-    { skipJsonContentType: true, allowUnauthorized: true },
+    {
+      skipJsonContentType: true,
+      allowUnauthorized: true,
+      includePatientToken: true,
+      patientToken,
+    },
   );
 }
 
 export async function getPatientPortalMatches(patientId: string): Promise<MatchEvaluation[]> {
   const data = await fetchJson<Paginated<JsonObject>>(`/patient/${patientId}/matches/`, undefined, {
     allowUnauthorized: true,
+    includePatientToken: true,
   });
   return data.results.map(mapMatch);
 }
@@ -397,6 +413,7 @@ export async function getPatientPortalMatches(patientId: string): Promise<MatchE
 export async function getPatientHistoryEntries(patientId: string): Promise<PatientHistoryEntryItem[]> {
   return fetchJson<PatientHistoryEntryItem[]>(`/patient/${patientId}/history/`, undefined, {
     allowUnauthorized: true,
+    includePatientToken: true,
   });
 }
 
@@ -407,7 +424,7 @@ export async function addPatientHistoryEntry(patientId: string, entryText: strin
       method: "POST",
       body: JSON.stringify({ entry_text: entryText }),
     },
-    { allowUnauthorized: true },
+    { allowUnauthorized: true, includePatientToken: true },
   );
 }
 
@@ -427,6 +444,6 @@ export async function requestPatientContact(
         body,
       }),
     },
-    { allowUnauthorized: true },
+    { allowUnauthorized: true, includePatientToken: true },
   );
 }

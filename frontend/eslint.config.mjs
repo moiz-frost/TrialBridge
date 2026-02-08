@@ -9,6 +9,9 @@ const config = [
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-require-imports": "off",
+      "no-console": ["error", { allow: ["warn", "error"] }],
+      "no-alert": "error",
+      eqeqeq: ["error", "always"],
       "react-hooks/purity": "off",
       "react-hooks/set-state-in-effect": "off",
     },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,12 +31,18 @@ import {
 } from "@/lib/api";
 import { SHOW_TECHNICAL_COPY, audienceCopy } from "@/lib/dev-mode";
 import { setPatientSession } from "@/lib/patient-session";
+import {
+  normalizeWhitespace,
+  validateContactInfo,
+  validateNarrativeText,
+} from "@/lib/validation";
 
 const TOTAL_STEPS = 4;
 
 export default function PatientIntakePage() {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [stepError, setStepError] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [formData, setFormData] = useState({
@@ -58,15 +64,111 @@ export default function PatientIntakePage() {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
+  useEffect(() => {
+    setStepError("");
+  }, [step]);
+
+  const validateStepInput = (stepNumber: number): string | null => {
+    if (stepNumber === 1) {
+      if (normalizeWhitespace(formData.name).length < 2) {
+        return "Please enter your full name.";
+      }
+      const age = Number(formData.age);
+      if (!Number.isFinite(age) || age < 1 || age > 120) {
+        return "Please enter a valid age between 1 and 120.";
+      }
+      if (!formData.sex) {
+        return "Please select your sex.";
+      }
+      if (!formData.language) {
+        return "Please select your preferred language.";
+      }
+      if (normalizeWhitespace(formData.city).length < 2) {
+        return "Please enter your city.";
+      }
+      if (!formData.country) {
+        return "Please select your country.";
+      }
+      return null;
+    }
+
+    if (stepNumber === 2) {
+      return validateNarrativeText(formData.story, {
+        minLength: 35,
+        minTokens: 8,
+        requireMedicalSignal: true,
+      });
+    }
+
+    if (stepNumber === 3) {
+      if (!formData.contactChannel) {
+        return "Please choose a preferred contact method.";
+      }
+      const contactError = validateContactInfo(formData.contactInfo, formData.contactChannel);
+      if (contactError) {
+        return contactError;
+      }
+      if (!formData.consent) {
+        return "Please confirm consent before submitting.";
+      }
+      return null;
+    }
+
+    return null;
+  };
+
+  const getFirstValidationIssue = (): { step: number; message: string } | null => {
+    for (const stepNumber of [1, 2, 3]) {
+      const message = validateStepInput(stepNumber);
+      if (message) {
+        return { step: stepNumber, message };
+      }
+    }
+    return null;
+  };
+
+  const goNext = () => {
+    const message = validateStepInput(step);
+    if (message) {
+      setStepError(message);
+      return;
+    }
+    setStepError("");
+    setStep((current) => Math.min(TOTAL_STEPS, current + 1));
+  };
+
   const handleSubmit = async () => {
     setSubmitError("");
+    const issue = getFirstValidationIssue();
+    if (issue) {
+      setStep(issue.step);
+      setSubmitError(issue.message);
+      return;
+    }
     setIsSubmitting(true);
+
+    const payload = {
+      ...formData,
+      name: normalizeWhitespace(formData.name),
+      age: String(Math.round(Number(formData.age))),
+      city: normalizeWhitespace(formData.city),
+      contactInfo: normalizeWhitespace(formData.contactInfo),
+      story: normalizeWhitespace(formData.story),
+    };
+
     try {
-      const result = await submitPatientIntake(formData);
+      const result = await submitPatientIntake(payload);
+      setPatientSession(
+        String(result.patient_id),
+        result.patient_code,
+        payload.name || "Patient",
+        result.patient_token,
+      );
       if (selectedFiles.length > 0) {
-        await Promise.all(selectedFiles.map((file) => uploadPatientDocument(result.patient_id, file)));
+        await Promise.all(
+          selectedFiles.map((file) => uploadPatientDocument(result.patient_id, file, result.patient_token)),
+        );
       }
-      setPatientSession(String(result.patient_id), result.patient_code, formData.name || "Patient");
       setStep(TOTAL_STEPS + 1);
     } catch {
       if (ENABLE_MOCK_FALLBACK) {
@@ -479,12 +581,12 @@ export default function PatientIntakePage() {
             Back
           </Button>
         ) : (
-          <div />
+        <div />
         )}
 
         {step < TOTAL_STEPS ? (
           <Button
-            onClick={() => setStep((s) => s + 1)}
+            onClick={goNext}
             className="gap-1.5"
           >
             Next
@@ -501,6 +603,9 @@ export default function PatientIntakePage() {
           </Button>
         )}
       </div>
+      {stepError && (
+        <p className="mt-3 text-xs text-[hsl(var(--warning))]">{stepError}</p>
+      )}
       {submitError && (
         <p className="mt-3 text-xs text-[hsl(var(--warning))]">{submitError}</p>
       )}

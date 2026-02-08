@@ -19,6 +19,13 @@ TOKEN_PATTERN = re.compile(r"[a-z0-9\+\-]{3,}")
 AGE_RANGE_PATTERN = re.compile(r"(\d{1,3})\s*(?:-|to)\s*(\d{1,3})\s*(?:years|year|yrs|yr|yo|y/o)")
 MIN_AGE_PATTERN = re.compile(r"(?:minimum age|min age)\s*[:\-]?\s*(\d{1,3})")
 MAX_AGE_PATTERN = re.compile(r"(?:maximum age|max age)\s*[:\-]?\s*(\d{1,3})")
+REPEATED_CHAR_PATTERN = re.compile(r"(.)\1{5,}")
+MEDICAL_SIGNAL_PATTERN = re.compile(
+    r"\b(cancer|tumou?r|metasta\w+|stage|ecog|her2|brca|chemo\w*|radiation|biopsy|diagnos\w+|treatment|"
+    r"surgery|hormone|receptor|trial|oncolog\w+|carcinoma|lymphoma|leukemia|platelet|bilirubin|"
+    r"creatinine|cbc|lft|lab|blood|symptom|pain|mri|ct|scan)\b",
+    re.IGNORECASE,
+)
 
 STOP_WORDS = {
     "with",
@@ -203,6 +210,40 @@ def _derive_urgency(patient: PatientProfile) -> tuple[int, str]:
     if "stage iii" in text or "advanced" in text:
         return 64, UrgencyFlag.MEDIUM
     return 38, UrgencyFlag.LOW
+
+
+def _has_meaningful_clinical_context(patient: PatientProfile) -> bool:
+    story = (patient.story or "").strip()
+    diagnosis = (patient.diagnosis or "").strip()
+    stage = (patient.stage or "").strip()
+    structured = patient.structured_profile if isinstance(patient.structured_profile, dict) else {}
+    markers = [marker for marker in structured.get("markers", []) if isinstance(marker, str) and marker.strip()]
+
+    combined_text = " ".join(filter(None, [diagnosis, stage, story, " ".join(markers)]))
+    if not combined_text:
+        return False
+
+    if REPEATED_CHAR_PATTERN.search(combined_text.lower()):
+        return False
+
+    raw_tokens = [token for token in TOKEN_PATTERN.findall(combined_text.lower()) if token not in STOP_WORDS]
+    if len(raw_tokens) < 5 and not (diagnosis or stage or markers):
+        return False
+
+    if len(raw_tokens) >= 8:
+        unique_ratio = len(set(raw_tokens)) / max(1, len(raw_tokens))
+        if unique_ratio < 0.4:
+            return False
+
+    non_space_chars = [char for char in combined_text if not char.isspace()]
+    if len(non_space_chars) >= 16:
+        letter_chars = [char for char in non_space_chars if char.isalpha()]
+        if letter_chars and (len(letter_chars) / len(non_space_chars)) < 0.45:
+            return False
+
+    has_structured_signal = bool(diagnosis or stage or markers)
+    has_medical_signal = bool(MEDICAL_SIGNAL_PATTERN.search(combined_text))
+    return has_structured_signal or has_medical_signal
 
 
 def _evaluate_rules(patient: PatientProfile, trial: Trial, similarity: float) -> Dict[str, object]:
@@ -405,6 +446,10 @@ def ensure_patient_embedding(patient: PatientProfile) -> None:
 
 
 def evaluate_patient_against_trials(patient: PatientProfile, run: MatchingRun | None = None) -> int:
+    if not _has_meaningful_clinical_context(patient):
+        MatchEvaluation.objects.filter(patient=patient).delete()
+        return 0
+
     ensure_patient_embedding(patient)
     candidates = _candidate_trials(patient)[: settings.MATCH_EVALUATE_TOP_N]
 
