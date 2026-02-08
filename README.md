@@ -95,8 +95,7 @@ Run them from a container/host with `psql` and `pg_dump` available.
 
 ## Deployment recommendation
 
-- Deploy `frontend/` to Vercel.
-- Deploy backend Docker stack to VPS (or container host).
+- Deploy full stack with Docker Compose on VPS.
 - Keep Postgres and Redis private (not public internet).
-- Configure `api.yourdomain.com` to reverse proxy into Django.
-
+- Configure host Nginx using `ops/setup_host_nginx.sh`:
+  - `DOMAIN=evercool.ae API_DOMAIN=api.evercool.ae ./ops/setup_host_nginx.sh`

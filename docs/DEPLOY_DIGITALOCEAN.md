@@ -1,8 +1,8 @@
 # TrialBridge Deployment (DigitalOcean + Tasjeel Domain)
 
 This guide assumes:
-- Frontend domain: `trialbridge.ae` (optional `www.trialbridge.ae`)
-- API domain: `api.trialbridge.ae`
+- Frontend domain: `evercool.ae` (optional `www.evercool.ae`)
+- API domain: `api.evercool.ae`
 - Project path on droplet: `/opt/trialbridge`
 - Full stack is Dockerized in production (`frontend` + backend services in compose)
 
@@ -47,10 +47,10 @@ Required values in `.env.prod`:
 - `DJANGO_SECRET_KEY`
 - `POSTGRES_PASSWORD`
 - `GEMINI_API_KEY`
-- `DJANGO_ALLOWED_HOSTS=api.trialbridge.ae`
-- `CORS_ALLOWED_ORIGINS=https://trialbridge.ae,https://www.trialbridge.ae`
-- `NEXT_PUBLIC_SITE_URL=https://trialbridge.ae`
-- `NEXT_PUBLIC_API_BASE_URL=https://api.trialbridge.ae/api/v1`
+- `DJANGO_ALLOWED_HOSTS=api.evercool.ae`
+- `CORS_ALLOWED_ORIGINS=https://evercool.ae,https://www.evercool.ae`
+- `NEXT_PUBLIC_SITE_URL=https://evercool.ae`
+- `NEXT_PUBLIC_API_BASE_URL=https://api.evercool.ae/api/v1`
 - `SEED_DEMO=0`
 
 ### 5.2 Start full stack
@@ -76,51 +76,21 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml exec -T api pytho
 ## 6) Nginx reverse proxy on host
 
 Your host Nginx terminates TLS and proxies:
-- `trialbridge.ae` -> `127.0.0.1:3000` (frontend container)
-- `api.trialbridge.ae` -> `127.0.0.1:8080` (backend nginx container)
+- `<domain>` -> `127.0.0.1:3000` (frontend container)
+- `api.<domain>` -> `127.0.0.1:8080` (backend nginx container)
 
-Create config:
+Use the repo script (recommended):
 ```bash
-sudo tee /etc/nginx/sites-available/trialbridge > /dev/null << 'EOF'
-server {
-    listen 80;
-    server_name trialbridge.ae www.trialbridge.ae;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-
-server {
-    listen 80;
-    server_name api.trialbridge.ae;
-    client_max_body_size 20M;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-EOF
+cd /opt/trialbridge
+chmod +x ops/setup_host_nginx.sh
+DOMAIN=evercool.ae API_DOMAIN=api.evercool.ae ./ops/setup_host_nginx.sh
 ```
 
-Enable site:
-```bash
-sudo ln -sf /etc/nginx/sites-available/trialbridge /etc/nginx/sites-enabled/trialbridge
-sudo nginx -t
-sudo systemctl reload nginx
-```
+This script:
+1. Renders `ops/nginx/trialbridge.host.conf.template`.
+2. Installs it to `/etc/nginx/sites-available/trialbridge`.
+3. Enables the site and disables Nginx default site.
+4. Validates and reloads Nginx.
 
 ---
 
@@ -128,9 +98,9 @@ sudo systemctl reload nginx
 
 ```bash
 sudo certbot --nginx \
-  -d trialbridge.ae \
-  -d www.trialbridge.ae \
-  -d api.trialbridge.ae \
+  -d evercool.ae \
+  -d www.evercool.ae \
+  -d api.evercool.ae \
   --redirect \
   -m <YOUR_EMAIL> \
   --agree-tos -n
@@ -156,9 +126,9 @@ sudo systemctl status nginx --no-pager
 
 ### 8.2 Endpoint checks
 ```bash
-curl -I https://trialbridge.ae
-curl -I https://www.trialbridge.ae
-curl -sS https://api.trialbridge.ae/api/v1/health/
+curl -I https://evercool.ae
+curl -I https://www.evercool.ae
+curl -sS https://api.evercool.ae/api/v1/health/
 ```
 
 Expected:

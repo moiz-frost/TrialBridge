@@ -72,5 +72,5 @@ docker compose "${COMPOSE_ARGS[@]}" exec -T api python manage.py check
 
 echo "Deployment complete."
 echo "Health check:"
-echo "  curl -I https://trialbridge.ae"
-echo "  curl -sS https://api.trialbridge.ae/api/v1/health/"
+echo "  curl -I ${NEXT_PUBLIC_SITE_URL}"
+echo "  curl -sS ${NEXT_PUBLIC_API_BASE_URL}/health/"
