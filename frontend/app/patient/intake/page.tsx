@@ -250,22 +250,24 @@ export default function PatientIntakePage() {
 
   return (
     <div>
-      <div className="mb-8 text-center">
-        <Badge
-          variant="secondary"
-          className="mb-4 gap-1.5 px-3 py-1.5 text-sm"
-        >
-          <Heart className="h-3.5 w-3.5 text-primary" />
-          Patient Intake Form
-        </Badge>
-        <h1 className="text-2xl font-bold text-foreground">
-          Tell Us About Your Condition
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Share your medical story in your own words. Our AI will help find
-          clinical trials that may be relevant to you.
-        </p>
-      </div>
+      {!isCompleted && (
+        <div className="mb-8 text-center">
+          <Badge
+            variant="secondary"
+            className="mb-4 gap-1.5 px-3 py-1.5 text-sm"
+          >
+            <Heart className="h-3.5 w-3.5 text-primary" />
+            Patient Intake Form
+          </Badge>
+          <h1 className="text-2xl font-bold text-foreground">
+            Tell Us About Your Condition
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Share your medical story in your own words. Our AI will help find
+            clinical trials that may be relevant to you.
+          </p>
+        </div>
+      )}
 
       {!isCompleted && (
         <div className="mb-6">
