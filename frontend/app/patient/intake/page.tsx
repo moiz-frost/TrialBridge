@@ -38,6 +38,7 @@ import {
 } from "@/lib/validation";
 
 const TOTAL_STEPS = 4;
+const STEP_LABELS = ["Basic Info", "Medical Story", "Contact", "Review"] as const;
 
 export default function PatientIntakePage() {
   const [step, setStep] = useState(1);
@@ -58,7 +59,8 @@ export default function PatientIntakePage() {
     consent: false,
   });
 
-  const progress = (step / TOTAL_STEPS) * 100;
+  const clampedStep = Math.max(1, Math.min(step, TOTAL_STEPS));
+  const progress = TOTAL_STEPS > 1 ? ((clampedStep - 1) / (TOTAL_STEPS - 1)) * 100 : 100;
 
   const updateField = (field: string, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -220,18 +222,14 @@ export default function PatientIntakePage() {
         </div>
         <Progress value={progress} className="mt-2 h-2" />
         <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-          <span className={step >= 1 ? "font-medium text-primary" : ""}>
-            Basic Info
-          </span>
-          <span className={step >= 2 ? "font-medium text-primary" : ""}>
-            Medical Story
-          </span>
-          <span className={step >= 3 ? "font-medium text-primary" : ""}>
-            Contact
-          </span>
-          <span className={step >= 4 ? "font-medium text-primary" : ""}>
-            Review
-          </span>
+          {STEP_LABELS.map((label, index) => (
+            <span
+              key={label}
+              className={step >= index + 1 ? "font-medium text-primary" : ""}
+            >
+              {label}
+            </span>
+          ))}
         </div>
       </div>
 

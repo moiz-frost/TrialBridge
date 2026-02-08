@@ -330,43 +330,43 @@ export default function CoordinatorDashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {refreshLabel}
-          </p>
         </div>
-        <Button
-          size="sm"
-          className="hidden gap-1.5 sm:flex"
-          disabled={runButtonDisabled}
-          onClick={async () => {
-            if (runButtonDisabled) return;
-            setIsRunningNow(true);
-            setError("");
-            try {
-              await runMatchingNow();
-              await refreshDashboard();
-            } catch (err) {
-              if (err instanceof ApiError && err.status === 409) {
-                setError("A matching run is already in progress.");
+        <div className="flex flex-col items-start gap-1 sm:items-end">
+          <Button
+            size="sm"
+            className="hidden gap-1.5 sm:flex"
+            disabled={runButtonDisabled}
+            onClick={async () => {
+              if (runButtonDisabled) return;
+              setIsRunningNow(true);
+              setError("");
+              try {
+                await runMatchingNow();
                 await refreshDashboard();
-              } else {
-                setError("Manual matching run failed. Please try again.");
+              } catch (err) {
+                if (err instanceof ApiError && err.status === 409) {
+                  setError("A matching run is already in progress.");
+                  await refreshDashboard();
+                } else {
+                  setError("Manual matching run failed. Please try again.");
+                }
+              } finally {
+                setIsRunningNow(false);
               }
-            } finally {
-              setIsRunningNow(false);
-            }
-          }}
-        >
-          {runButtonDisabled ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Zap className="h-4 w-4" />
-          )}
-          {runButtonDisabled ? "Run In Progress" : "Run Matching Now"}
-        </Button>
+            }}
+          >
+            {runButtonDisabled ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Zap className="h-4 w-4" />
+            )}
+            {runButtonDisabled ? "Run In Progress" : "Run Matching Now"}
+          </Button>
+          <p className="text-sm text-muted-foreground">{refreshLabel}</p>
+        </div>
       </div>
       {error && <p className="mt-2 text-sm text-[hsl(var(--warning))]">{error}</p>}
 
