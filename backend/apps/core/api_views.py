@@ -15,9 +15,13 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from apps.accounts.models import User
 from apps.core.models import Organization
 from apps.core.permissions import IsAuthenticatedPatientPortal, IsCoordinatorOrAdmin
-from apps.matching.models import MatchEvaluation
+from apps.matching.models import MatchEvaluation, MatchingRun
 from apps.matching.serializers import MatchEvaluationSerializer, MatchingRunSerializer
-from apps.matching.services.engine import evaluate_patient_against_trials, run_full_matching_cycle
+from apps.matching.services.engine import (
+    MatchingRunAlreadyRunningError,
+    evaluate_patient_against_trials,
+    run_full_matching_cycle,
+)
 from apps.outreach.models import OutreachMessage
 from apps.outreach.serializers import OutreachMessageSerializer, SendOutreachSerializer
 from apps.outreach.services.sender import send_outreach_message
@@ -92,6 +96,11 @@ class CoordinatorDashboardView(APIView):
 
         pending = qs.filter(outreach_status__in=["pending", "draft"]).count()
         avg_elig = qs.aggregate(v=Avg("eligibility_score"))["v"] or 0
+        run_queryset = MatchingRun.objects.order_by("-started_at")
+        latest_run = run_queryset.first()
+        running_run = run_queryset.filter(status="running").first()
+        completed_run = run_queryset.filter(status="completed", finished_at__isnull=False).order_by("-finished_at").first()
+        latest_match_evaluated = qs.order_by("-last_evaluated").values_list("last_evaluated", flat=True).first()
 
         data = {
             "newMatches": qs.filter(is_new=True).count(),
@@ -101,6 +110,14 @@ class CoordinatorDashboardView(APIView):
             "totalPatients": PatientProfile.objects.filter(organization=org).count() if org else PatientProfile.objects.count(),
             "totalTrials": Trial.objects.count(),
             "avgEligibility": round(avg_elig),
+            "matching": {
+                "is_running": bool(running_run),
+                "running_run_id": running_run.id if running_run else None,
+                "running_started_at": running_run.started_at if running_run else None,
+                "latest_run_status": latest_run.status if latest_run else None,
+                "latest_run_started_at": latest_run.started_at if latest_run else None,
+                "last_completed_at": (completed_run.finished_at if completed_run else latest_match_evaluated),
+            },
         }
         return Response(data)
 
@@ -569,5 +586,11 @@ class MatchingRunNowView(APIView):
     permission_classes = [IsCoordinatorOrAdmin]
 
     def post(self, request):
-        run = run_full_matching_cycle(run_type="manual")
+        try:
+            run = run_full_matching_cycle(run_type="manual")
+        except MatchingRunAlreadyRunningError as exc:
+            payload = {"detail": "A matching run is already in progress."}
+            if exc.running_run:
+                payload["running_run"] = MatchingRunSerializer(exc.running_run).data
+            return Response(payload, status=status.HTTP_409_CONFLICT)
         return Response(MatchingRunSerializer(run).data)

@@ -274,6 +274,14 @@ export async function getDashboardStats() {
     totalPatients: number;
     totalTrials: number;
     avgEligibility: number;
+    matching: {
+      is_running: boolean;
+      running_run_id: number | null;
+      running_started_at: string | null;
+      latest_run_status: string | null;
+      latest_run_started_at: string | null;
+      last_completed_at: string | null;
+    };
   }>("/coordinator/dashboard/");
 }
 

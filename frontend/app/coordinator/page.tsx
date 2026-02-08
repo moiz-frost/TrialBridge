@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,12 +14,14 @@ import {
   type MatchEvaluation,
 } from "@/lib/mock-data";
 import {
+  ApiError,
   ENABLE_MOCK_FALLBACK,
   getDashboardStats,
   getMatches,
   runMatchingNow,
 } from "@/lib/api";
 import { audienceCopy } from "@/lib/dev-mode";
+import { formatFriendlyDateTime, formatRelativeUpdate } from "@/lib/date";
 import {
   Zap,
   AlertTriangle,
@@ -31,6 +33,7 @@ import {
   TrendingUp,
   ArrowRight,
   ChevronRight,
+  Loader2,
 } from "lucide-react";
 
 function StatCard({
@@ -150,6 +153,14 @@ type DashboardStats = {
   totalPatients: number;
   totalTrials: number;
   avgEligibility: number;
+  matching: {
+    is_running: boolean;
+    running_run_id: number | null;
+    running_started_at: string | null;
+    latest_run_status: string | null;
+    latest_run_started_at: string | null;
+    last_completed_at: string | null;
+  };
 };
 
 function DashboardSkeleton() {
@@ -216,6 +227,14 @@ export default function CoordinatorDashboard() {
     totalPatients: dashboardStats.totalPatients,
     totalTrials: dashboardStats.totalTrials,
     avgEligibility: dashboardStats.avgEligibility,
+    matching: {
+      is_running: false,
+      running_run_id: null,
+      running_started_at: null,
+      latest_run_status: null,
+      latest_run_started_at: null,
+      last_completed_at: null,
+    },
   });
   const [recentMatches, setRecentMatches] = useState<MatchEvaluation[]>([]);
   const [allMatches, setAllMatches] = useState<MatchEvaluation[]>([]);
@@ -223,12 +242,12 @@ export default function CoordinatorDashboard() {
   const [isRunningNow, setIsRunningNow] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
-  const refreshDashboard = async () => {
+  const refreshDashboard = useCallback(async () => {
     const [liveStats, liveMatches] = await Promise.all([getDashboardStats(), getMatches()]);
     setStats(liveStats);
     setAllMatches(liveMatches);
     setRecentMatches(liveMatches.slice(0, 5));
-  };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -249,6 +268,14 @@ export default function CoordinatorDashboard() {
             totalPatients: dashboardStats.totalPatients,
             totalTrials: dashboardStats.totalTrials,
             avgEligibility: dashboardStats.avgEligibility,
+            matching: {
+              is_running: false,
+              running_run_id: null,
+              running_started_at: null,
+              latest_run_status: null,
+              latest_run_started_at: null,
+              last_completed_at: null,
+            },
           });
           setAllMatches(mockMatches);
           setRecentMatches(mockMatches.slice(0, 5));
@@ -273,7 +300,29 @@ export default function CoordinatorDashboard() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshDashboard]);
+
+  useEffect(() => {
+    if (!stats.matching?.is_running) return;
+    const timer = window.setInterval(() => {
+      refreshDashboard().catch(() => {
+        // Keep existing UI state on polling errors.
+      });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshDashboard, stats.matching?.is_running]);
+
+  const serverRunInProgress = Boolean(stats.matching?.is_running);
+  const runButtonDisabled = isRunningNow || serverRunInProgress;
+  const refreshLabel = (() => {
+    if (serverRunInProgress && stats.matching.running_started_at) {
+      return `Matching run in progress (started ${formatRelativeUpdate(stats.matching.running_started_at)}).`;
+    }
+    if (stats.matching?.last_completed_at) {
+      return `Last match refresh: ${formatFriendlyDateTime(stats.matching.last_completed_at)}.`;
+    }
+    return "No matching run has completed yet.";
+  })();
 
   if (isInitialLoading) {
     return <DashboardSkeleton />;
@@ -285,27 +334,38 @@ export default function CoordinatorDashboard() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Last match refresh: Today at 6:00 AM PKT
+            {refreshLabel}
           </p>
         </div>
         <Button
           size="sm"
           className="hidden gap-1.5 sm:flex"
+          disabled={runButtonDisabled}
           onClick={async () => {
+            if (runButtonDisabled) return;
             setIsRunningNow(true);
             setError("");
             try {
               await runMatchingNow();
               await refreshDashboard();
-            } catch {
-              setError("Manual matching run failed. Please try again.");
+            } catch (err) {
+              if (err instanceof ApiError && err.status === 409) {
+                setError("A matching run is already in progress.");
+                await refreshDashboard();
+              } else {
+                setError("Manual matching run failed. Please try again.");
+              }
             } finally {
               setIsRunningNow(false);
             }
           }}
         >
-          <Zap className="h-4 w-4" />
-          {isRunningNow ? "Running..." : "Run Matching Now"}
+          {runButtonDisabled ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Zap className="h-4 w-4" />
+          )}
+          {runButtonDisabled ? "Run In Progress" : "Run Matching Now"}
         </Button>
       </div>
       {error && <p className="mt-2 text-sm text-[hsl(var(--warning))]">{error}</p>}

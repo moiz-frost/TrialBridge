@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
 
 from django.conf import settings
+from django.db import connection
 from django.db.models import QuerySet
 from django.utils import timezone
 from pgvector.django import CosineDistance
@@ -55,6 +56,14 @@ STOP_WORDS = {
     "for",
     "are",
 }
+
+MATCHING_RUN_LOCK_KEY = 8432671934
+
+
+class MatchingRunAlreadyRunningError(RuntimeError):
+    def __init__(self, running_run: MatchingRun | None = None):
+        super().__init__("A matching run is already in progress.")
+        self.running_run = running_run
 
 
 @dataclass
@@ -499,15 +508,39 @@ def evaluate_patient_against_trials(patient: PatientProfile, run: MatchingRun | 
 
 
 def run_full_matching_cycle(run_type: str = "scheduled") -> MatchingRun:
-    run = MatchingRun.objects.create(run_type=run_type, status="running")
-    total_updates = 0
-    patients = PatientProfile.objects.select_related("organization").all()
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_lock(%s)", [MATCHING_RUN_LOCK_KEY])
+        lock_row = cursor.fetchone()
+    lock_acquired = bool(lock_row and lock_row[0])
 
-    for patient in patients:
-        total_updates += evaluate_patient_against_trials(patient, run=run)
+    if not lock_acquired:
+        running_run = MatchingRun.objects.filter(status="running").order_by("-started_at").first()
+        raise MatchingRunAlreadyRunningError(running_run=running_run)
 
-    run.status = "completed"
-    run.metadata = {"patients": patients.count(), "updates": total_updates}
-    run.finished_at = timezone.now()
-    run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
-    return run
+    run: MatchingRun | None = None
+    try:
+        run = MatchingRun.objects.create(run_type=run_type, status="running")
+        total_updates = 0
+        patients = PatientProfile.objects.select_related("organization").all()
+
+        for patient in patients:
+            total_updates += evaluate_patient_against_trials(patient, run=run)
+
+        run.status = "completed"
+        run.metadata = {"patients": patients.count(), "updates": total_updates}
+        run.finished_at = timezone.now()
+        run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
+        return run
+    except Exception as exc:
+        if run is not None:
+            run.status = "failed"
+            run.finished_at = timezone.now()
+            run.metadata = {
+                **(run.metadata or {}),
+                "error": str(exc),
+            }
+            run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
+        raise
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_unlock(%s)", [MATCHING_RUN_LOCK_KEY])
