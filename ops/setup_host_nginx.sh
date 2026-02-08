@@ -44,7 +44,14 @@ if ! $SUDO systemctl is-active --quiet nginx; then
   echo "nginx.service is not active. Starting and enabling nginx..."
   $SUDO systemctl enable --now nginx
 else
-  $SUDO systemctl reload nginx
+  $SUDO systemctl reload nginx || $SUDO systemctl restart nginx
+fi
+
+if ! $SUDO systemctl is-active --quiet nginx; then
+  echo "Host nginx failed to start/reload. Port owners on 80/443:"
+  $SUDO ss -ltnp | grep -E ":(80|443) " || true
+  echo "If docker is occupying 80/443, stop the conflicting containers and rerun this script."
+  exit 1
 fi
 
 echo "Nginx host proxy configured successfully."
