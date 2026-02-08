@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from apps.accounts.models import User
+from apps.accounts.models import User, UserRole
 from apps.core.models import Organization
 from apps.core.permissions import IsAuthenticatedPatientPortal, IsCoordinatorOrAdmin
 from apps.matching.models import MatchEvaluation, MatchingRun
@@ -50,6 +50,55 @@ def _build_combined_history_text(patient: PatientProfile) -> str:
     if cleaned:
         return "\n\n".join(cleaned)
     return (patient.story or "").strip()
+
+
+def _resolve_intake_organization(payload: dict) -> Organization:
+    requested_slug = str(payload.get("organizationSlug", "") or "").strip()
+    if requested_slug:
+        selected = Organization.objects.filter(slug=requested_slug).first()
+        if selected:
+            return selected
+
+    default_slug = str(getattr(settings, "INTAKE_DEFAULT_ORGANIZATION_SLUG", "") or "").strip()
+    if default_slug:
+        selected = Organization.objects.filter(slug=default_slug).first()
+        if selected:
+            return selected
+
+    country = str(payload.get("country", "") or "").strip()
+    if country:
+        selected = (
+            Organization.objects.filter(country__iexact=country, users__role=UserRole.COORDINATOR)
+            .distinct()
+            .order_by("created_at")
+            .first()
+        )
+        if selected:
+            return selected
+
+        selected = Organization.objects.filter(country__iexact=country).order_by("created_at").first()
+        if selected:
+            return selected
+
+    selected = (
+        Organization.objects.filter(users__role=UserRole.COORDINATOR)
+        .distinct()
+        .order_by("created_at")
+        .first()
+    )
+    if selected:
+        return selected
+
+    selected = Organization.objects.order_by("created_at").first()
+    if selected:
+        return selected
+
+    return Organization.objects.create(
+        name="Default Hospital Organization",
+        slug="default-hospital",
+        country=country or "",
+        score_weights={"eligibility": 0.45, "feasibility": 0.30, "urgency": 0.20, "explainability": 0.05},
+    )
 
 
 def _assert_patient_portal_scope(request, patient_id: int) -> None:
@@ -291,14 +340,7 @@ class PatientIntakeView(APIView):
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
 
-        org = Organization.objects.first()
-        if not org:
-            org = Organization.objects.create(
-                name="Default Hospital Organization",
-                slug="default-hospital",
-                country=payload["country"],
-                score_weights={"eligibility": 0.45, "feasibility": 0.30, "urgency": 0.20, "explainability": 0.05},
-            )
+        org = _resolve_intake_organization(payload)
 
         structured = infer_structured_profile(payload.get("story", ""))
         embedding = generate_patient_embedding(payload, structured)

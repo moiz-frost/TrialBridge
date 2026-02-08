@@ -37,6 +37,7 @@ class PatientIntakeSerializer(serializers.Serializer):
     city = serializers.CharField(max_length=128)
     country = serializers.CharField(max_length=128)
     language = serializers.CharField(max_length=32)
+    organizationSlug = serializers.SlugField(required=False, allow_blank=True)
     contactChannel = serializers.ChoiceField(choices=["sms", "whatsapp", "email", "phone"])
     contactInfo = serializers.CharField(max_length=255)
     story = serializers.CharField(allow_blank=True)

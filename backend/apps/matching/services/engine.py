@@ -522,12 +522,29 @@ def run_full_matching_cycle(run_type: str = "scheduled") -> MatchingRun:
         run = MatchingRun.objects.create(run_type=run_type, status="running")
         total_updates = 0
         patients = PatientProfile.objects.select_related("organization").all()
+        total_patients = patients.count()
+        processed_patients = 0
 
         for patient in patients:
+            live_metadata = MatchingRun.objects.filter(id=run.id).values_list("metadata", flat=True).first()
+            if isinstance(live_metadata, dict) and live_metadata.get("stop_requested"):
+                run.status = "stopped"
+                run.metadata = {
+                    **live_metadata,
+                    "patients": total_patients,
+                    "updates": total_updates,
+                    "processed_patients": processed_patients,
+                    "stopped_reason": "stop_requested",
+                }
+                run.finished_at = timezone.now()
+                run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
+                return run
+
             total_updates += evaluate_patient_against_trials(patient, run=run)
+            processed_patients += 1
 
         run.status = "completed"
-        run.metadata = {"patients": patients.count(), "updates": total_updates}
+        run.metadata = {"patients": total_patients, "updates": total_updates}
         run.finished_at = timezone.now()
         run.save(update_fields=["status", "metadata", "finished_at", "updated_at"])
         return run
