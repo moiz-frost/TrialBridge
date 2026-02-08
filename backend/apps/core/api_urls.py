@@ -1,0 +1,47 @@
+from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
+
+from .api_views import (
+    CoordinatorDashboardView,
+    CoordinatorMatchDetailView,
+    CoordinatorMatchesView,
+    CoordinatorOutreachListView,
+    CoordinatorOutreachSendView,
+    CoordinatorPatientDetailView,
+    CoordinatorPatientsView,
+    CoordinatorSettingsView,
+    CoordinatorTrialsView,
+    HealthCheckView,
+    MatchingRunNowView,
+    MeView,
+    PatientAccessView,
+    PatientContactRequestView,
+    PatientIntakeView,
+    PatientDocumentUploadView,
+    PatientHistoryView,
+    PatientPortalMatchesView,
+    TrialBridgeTokenView,
+)
+
+urlpatterns = [
+    path("health/", HealthCheckView.as_view(), name="health"),
+    path("auth/login/", TrialBridgeTokenView.as_view(), name="auth-login"),
+    path("auth/refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
+    path("auth/me/", MeView.as_view(), name="auth-me"),
+    path("coordinator/dashboard/", CoordinatorDashboardView.as_view(), name="coord-dashboard"),
+    path("coordinator/matches/", CoordinatorMatchesView.as_view(), name="coord-matches"),
+    path("coordinator/matches/<int:id>/", CoordinatorMatchDetailView.as_view(), name="coord-match-detail"),
+    path("coordinator/patients/", CoordinatorPatientsView.as_view(), name="coord-patients"),
+    path("coordinator/patients/<int:id>/", CoordinatorPatientDetailView.as_view(), name="coord-patient-detail"),
+    path("coordinator/trials/", CoordinatorTrialsView.as_view(), name="coord-trials"),
+    path("coordinator/outreach/", CoordinatorOutreachListView.as_view(), name="coord-outreach"),
+    path("coordinator/outreach/send/", CoordinatorOutreachSendView.as_view(), name="coord-outreach-send"),
+    path("coordinator/settings/", CoordinatorSettingsView.as_view(), name="coord-settings"),
+    path("coordinator/matching/run/", MatchingRunNowView.as_view(), name="coord-matching-run"),
+    path("patient/intake/", PatientIntakeView.as_view(), name="patient-intake"),
+    path("patient/access/", PatientAccessView.as_view(), name="patient-access"),
+    path("patient/<int:patient_id>/documents/", PatientDocumentUploadView.as_view(), name="patient-documents"),
+    path("patient/<int:patient_id>/history/", PatientHistoryView.as_view(), name="patient-history"),
+    path("patient/<int:patient_id>/matches/", PatientPortalMatchesView.as_view(), name="patient-portal-matches"),
+    path("patient/<int:patient_id>/contact-request/", PatientContactRequestView.as_view(), name="patient-contact-request"),
+]

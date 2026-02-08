@@ -1,0 +1,23 @@
+services:
+  postgres:
+    ports: []
+
+  redis:
+    ports: []
+
+  api:
+    env_file:
+      - .env.prod
+    ports: []
+
+  worker:
+    env_file:
+      - .env.prod
+
+  beat:
+    env_file:
+      - .env.prod
+
+  nginx:
+    ports:
+      - "127.0.0.1:8080:80"
