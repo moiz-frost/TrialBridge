@@ -116,3 +116,27 @@ class MatchingEngineTests(TestCase):
         updates = evaluate_patient_against_trials(gibberish_patient)
         self.assertEqual(updates, 0)
         self.assertFalse(MatchEvaluation.objects.filter(patient=gibberish_patient).exists())
+
+    def test_engine_filters_low_relevance_matches(self):
+        weak_signal_patient = PatientProfile.objects.create(
+            patient_code="PAT-9003",
+            organization=self.org,
+            full_name="Low Relevance Patient",
+            age=33,
+            sex="male",
+            city="Dubai",
+            country="UAE",
+            language="English",
+            diagnosis="",
+            stage="",
+            story="I have severe scoliosis and severe headache. I also have skin cancer.",
+            structured_profile={"markers": [], "raw_story": "I have severe scoliosis and severe headache. I also have skin cancer."},
+            contact_channel="email",
+            contact_value="low.relevance@example.com",
+            consent=True,
+            profile_completeness=88,
+        )
+
+        updates = evaluate_patient_against_trials(weak_signal_patient)
+        self.assertEqual(updates, 0)
+        self.assertFalse(MatchEvaluation.objects.filter(patient=weak_signal_patient).exists())

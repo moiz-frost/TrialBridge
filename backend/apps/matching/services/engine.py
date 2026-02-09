@@ -397,12 +397,42 @@ def _evaluate_rules(patient: PatientProfile, trial: Trial, similarity: float) ->
         "explainability_score": explainability_score,
         "weighted_score": round(weighted_score, 2),
         "overall_status": overall_status,
+        "condition_overlap": round(condition_overlap, 4),
+        "marker_overlap": round(marker_overlap, 4),
         "reasons_matched": reasons_matched,
         "reasons_failed": reasons_failed,
         "missing_info": missing_info,
         "doctor_checklist": doctor_checklist,
         "confidence": confidence,
     }
+
+
+def _passes_relevance_gate(rule_result: Dict[str, object], similarity: float) -> bool:
+    min_eligibility = max(0, int(getattr(settings, "MATCH_MIN_ELIGIBILITY_SCORE", 35)))
+    min_condition_overlap = max(0.0, float(getattr(settings, "MATCH_MIN_CONDITION_OVERLAP", 0.06)))
+    min_vector_similarity = max(0.0, float(getattr(settings, "MATCH_MIN_VECTOR_SIMILARITY", 0.62)))
+
+    eligibility = int(rule_result.get("eligibility_score", 0) or 0)
+    if eligibility < min_eligibility:
+        return False
+
+    overall_status = str(rule_result.get("overall_status", ""))
+    if overall_status == MatchOverallStatus.UNLIKELY:
+        return False
+
+    condition_overlap = float(rule_result.get("condition_overlap", 0.0) or 0.0)
+    marker_overlap = float(rule_result.get("marker_overlap", 0.0) or 0.0)
+
+    if condition_overlap < min_condition_overlap and marker_overlap <= 0.0 and similarity < min_vector_similarity:
+        return False
+
+    reasons_failed = [str(item) for item in (rule_result.get("reasons_failed") or [])]
+    if condition_overlap <= 0.0 and marker_overlap <= 0.0 and any(
+        "Diagnosis alignment with trial conditions is weak" in reason for reason in reasons_failed
+    ):
+        return False
+
+    return True
 
 
 def _candidate_trials(patient: PatientProfile) -> List[Candidate]:
@@ -499,9 +529,14 @@ def evaluate_patient_against_trials(
     candidates = _candidate_trials(patient)[: settings.MATCH_EVALUATE_TOP_N]
 
     updates = 0
+    retained_trial_ids: set[int] = set()
     for candidate in candidates:
         trial = candidate.trial
         rule_result = _evaluate_rules(patient, trial, candidate.similarity)
+        if not _passes_relevance_gate(rule_result, candidate.similarity):
+            continue
+
+        retained_trial_ids.add(trial.id)
         llm_budget_reached = False
         if llm_state is not None:
             used = int(llm_state.get("used", 0))
@@ -547,6 +582,9 @@ def evaluate_patient_against_trials(
             match.is_new = False
             match.save(update_fields=["is_new", "updated_at"])
         updates += 1
+
+    stale_matches = MatchEvaluation.objects.filter(patient=patient).exclude(trial_id__in=retained_trial_ids)
+    stale_matches.filter(outreach_messages__isnull=True).delete()
 
     return updates
 

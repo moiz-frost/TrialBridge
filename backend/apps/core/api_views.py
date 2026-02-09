@@ -15,7 +15,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from apps.accounts.models import User, UserRole
 from apps.core.models import Organization
 from apps.core.permissions import IsAuthenticatedPatientPortal, IsCoordinatorOrAdmin
-from apps.matching.models import MatchEvaluation, MatchingRun
+from apps.matching.models import MatchEvaluation, MatchOverallStatus, MatchingRun
 from apps.matching.serializers import MatchEvaluationSerializer, MatchingRunSerializer
 from apps.matching.services.engine import (
     MatchingRunAlreadyRunningError,
@@ -43,6 +43,11 @@ from apps.patients.services.access_token import issue_patient_portal_token
 from apps.patients.services.document_extraction import extract_document_text, is_supported_text_document
 from apps.trials.models import Trial
 from apps.trials.serializers import TrialSerializer
+
+
+def _visible_matches_queryset(queryset):
+    min_eligibility = max(0, int(getattr(settings, "MATCH_MIN_ELIGIBILITY_SCORE", 35)))
+    return queryset.exclude(overall_status=MatchOverallStatus.UNLIKELY).filter(eligibility_score__gte=min_eligibility)
 
 
 def _build_combined_history_text(patient: PatientProfile) -> str:
@@ -207,6 +212,7 @@ class CoordinatorDashboardView(APIView):
         if not org:
             return Response({"detail": "User has no organization"}, status=400)
         qs = MatchEvaluation.objects.filter(organization=org) if org else MatchEvaluation.objects.all()
+        qs = _visible_matches_queryset(qs)
 
         pending = qs.filter(outreach_status__in=["pending", "draft"]).count()
         avg_elig = qs.aggregate(v=Avg("eligibility_score"))["v"] or 0
@@ -245,7 +251,7 @@ class CoordinatorMatchesView(generics.ListAPIView):
         if not org:
             return MatchEvaluation.objects.none()
         queryset = MatchEvaluation.objects.select_related("patient", "trial").order_by("-last_evaluated")
-        queryset = queryset.filter(organization=org)
+        queryset = _visible_matches_queryset(queryset.filter(organization=org))
 
         search = self.request.query_params.get("search")
         if search:
@@ -263,7 +269,7 @@ class CoordinatorMatchDetailView(generics.RetrieveAPIView):
         if not org:
             return MatchEvaluation.objects.none()
         queryset = MatchEvaluation.objects.select_related("patient", "trial")
-        return queryset.filter(organization=org)
+        return _visible_matches_queryset(queryset.filter(organization=org))
 
 
 class CoordinatorPatientsView(generics.ListAPIView):
@@ -291,11 +297,14 @@ class CoordinatorPatientDetailView(APIView):
 
         patient = get_object_or_404(PatientProfile, id=id, organization=org)
         _ensure_ai_structured_profile(patient)
+        _ensure_initial_history_entry(patient)
         documents = patient.documents.order_by("-created_at")
         history_entries = patient.history_entries.order_by("-created_at")
         matches = (
             MatchEvaluation.objects.select_related("patient", "trial")
             .filter(organization=org, patient=patient)
+            .exclude(overall_status=MatchOverallStatus.UNLIKELY)
+            .filter(eligibility_score__gte=max(0, int(getattr(settings, "MATCH_MIN_ELIGIBILITY_SCORE", 35))))
             .order_by("-last_evaluated")
         )
 
@@ -405,11 +414,13 @@ class PatientIntakeView(APIView):
         serializer = PatientIntakeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = serializer.validated_data
+        story_text = str(payload.get("story", "") or "").strip()
+        normalized_payload = {**payload, "story": story_text}
 
         org = _resolve_intake_organization(payload)
 
-        structured = infer_structured_profile(payload.get("story", ""))
-        embedding = generate_patient_embedding(payload, structured)
+        structured = infer_structured_profile(story_text)
+        embedding = generate_patient_embedding(normalized_payload, structured)
 
         patient_count = PatientProfile.objects.count() + 1
         patient = PatientProfile.objects.create(
@@ -423,19 +434,19 @@ class PatientIntakeView(APIView):
             language=payload["language"],
             diagnosis=structured.get("diagnosis", ""),
             stage=structured.get("stage", ""),
-            story=payload.get("story", ""),
+            story=story_text,
             structured_profile=structured,
             contact_channel=payload["contactChannel"],
             contact_value=payload["contactInfo"],
             consent=payload["consent"],
-            profile_completeness=compute_completeness(payload),
+            profile_completeness=compute_completeness(normalized_payload),
             embedding_vector=embedding,
         )
-        if payload.get("story"):
+        if story_text:
             PatientHistoryEntry.objects.create(
                 patient=patient,
                 source=PatientHistoryEntry.Source.INTAKE,
-                entry_text=payload.get("story", ""),
+                entry_text=story_text,
             )
 
         evaluate_patient_against_trials(patient)
@@ -527,9 +538,8 @@ class PatientPortalMatchesView(generics.ListAPIView):
     def get_queryset(self):
         patient_id = self.kwargs["patient_id"]
         _assert_patient_portal_scope(self.request, patient_id)
-        return MatchEvaluation.objects.select_related("patient", "trial").filter(patient_id=patient_id).order_by(
-            "-eligibility_score"
-        )
+        queryset = MatchEvaluation.objects.select_related("patient", "trial").filter(patient_id=patient_id)
+        return _visible_matches_queryset(queryset).order_by("-eligibility_score")
 
 
 class PatientHistoryView(APIView):

@@ -144,7 +144,26 @@ def _gemini_story_parse(story: str) -> Dict[str, object] | None:
         response.raise_for_status()
         payload = response.json()
         text = _extract_gemini_text(payload).strip()
-        parsed = _extract_json_object(text)
+        if not text:
+            return None
+
+        try:
+            parsed = _extract_json_object(text)
+        except Exception:
+            # Gemini occasionally returns plain text even when JSON is requested.
+            fallback_summary = _normalize_text(text)
+            if not fallback_summary:
+                return None
+            return {
+                "ai_summary": fallback_summary,
+                "diagnosis": "",
+                "stage": "",
+                "markers": [],
+                "symptoms": [],
+                "treatments": [],
+                "parser": f"gemini:{model}:text",
+            }
+
         return {
             "ai_summary": _normalize_text(str(parsed.get("ai_summary", ""))),
             "diagnosis": _normalize_text(str(parsed.get("diagnosis", ""))),

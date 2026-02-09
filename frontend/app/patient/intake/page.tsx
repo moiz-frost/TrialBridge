@@ -35,7 +35,6 @@ import { setPatientSession } from "@/lib/patient-session";
 import {
   normalizeWhitespace,
   validateContactInfo,
-  validateNarrativeText,
   normalizePhoneDigits,
 } from "@/lib/validation";
 
@@ -142,18 +141,11 @@ export default function PatientIntakePage() {
     }
 
     if (stepNumber === 2) {
-      const narrativeError = validateNarrativeText(formData.story, {
-        minLength: 35,
-        minTokens: 8,
-        requireMedicalSignal: false,
-      });
-      if (!narrativeError) {
+      const storyText = normalizeWhitespace(formData.story);
+      if (storyText || selectedFiles.length > 0) {
         return null;
       }
-      if (selectedFiles.length > 0) {
-        return null;
-      }
-      return narrativeError;
+      return "Please share your story or upload at least one medical document.";
     }
 
     if (stepNumber === 3) {
